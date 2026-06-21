@@ -45,6 +45,16 @@ the diff directly and let the brief supply the impact.
 
 ## Workflow
 
+0. **Just route it (recommended default).** One call measures the diff and picks
+   the brief (small) or the full map (large) for you:
+   ```bash
+   python scripts/route.py --range main..HEAD --cwd <repo>
+   ```
+   It prints `mode: brief` or `mode: full` with the reason, then the chosen
+   output. Override with `--force {brief,full}` or tune `--max-brief-files` /
+   `--max-brief-lines`. Use the manual steps below only when you want a specific
+   layer or output.
+
 1. **Decide the range.**
    - Branch vs. base: `--range main..HEAD` (substitute the real base).
    - Uncommitted work: `--staged`, or no range for the working tree.

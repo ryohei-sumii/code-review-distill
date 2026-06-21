@@ -468,6 +468,44 @@ def test_run_loop_predictions_perfect(tmp_path):
     assert data["metrics"]["fp"] == 0
 
 
+# --- route (auto brief/full switch) ----------------------------------------
+
+def test_route_small_picks_brief(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "a.py", "x = 1\n")
+    commit_all(repo, "init")
+    write(repo, "a.py", "x = 2\n")
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["mode"] == "brief"
+
+
+def test_route_large_picks_full(tmp_path):
+    repo = init_repo(tmp_path)
+    for i in range(8):
+        write(repo, "m%d.py" % i, "x = 1\n")
+    commit_all(repo, "init")
+    for i in range(8):
+        write(repo, "m%d.py" % i, "x = 2\ny = 3\n")
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["mode"] == "full"
+    assert "review_order" in data
+
+
+def test_route_force_overrides_threshold(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "a.py", "x = 1\n")
+    commit_all(repo, "init")
+    write(repo, "a.py", "x = 2\n")
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--force", "full", "--json", expect=0)
+    assert data["mode"] == "full"
+
+
 # --- impact_brief (small-change path) --------------------------------------
 
 def test_brief_layer1_facts_without_grammar(tmp_path):

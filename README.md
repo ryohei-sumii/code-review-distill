@@ -13,6 +13,11 @@ in the middle of a long transcript.
 > diff, just read it — the map costs more than it saves. The win shows up on
 > multi-file / large changesets.
 >
+> For small changes, don't compete with "read the diff" on bytes — use
+> `scripts/impact_brief.py`, which returns only the cross-repo signals the model
+> can't cheaply self-compute (blast radius, breaking signature changes, test
+> gap) in a few hundred bytes. Net-positive even on a one-file change.
+>
 > What this measurably does and does **not** do is recorded in
 > [`evals/FINDINGS.md`](evals/FINDINGS.md): the value is context-cost reduction
 > on large-file / impact-analysis reviews, **not** improved bug detection (a
@@ -28,6 +33,7 @@ code-review-distill/
 │   ├── diff_summary.py         # Layer 1 (language-agnostic) — the core
 │   ├── symbol_impact.py        # Layer 2 (TS/JS/Python/Go) — blast radius
 │   ├── refactor_check.py       # companion: refactor invariant checker
+│   ├── impact_brief.py         # small-change path: cross-repo signals only
 │   ├── flow_map.py             # companion: call graph -> Mermaid
 │   ├── run_loop.py             # companion: SKILL.md trigger-accuracy eval loop
 │   └── needle_eval.py          # companion: lost-in-the-middle geometry eval

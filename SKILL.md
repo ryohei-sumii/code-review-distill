@@ -5,9 +5,9 @@ description: >-
   pull request — e.g. "review this branch", "review the diff against main",
   "what's the blast radius of these changes", "code review this PR". It distills
   a diff into a compact structured map (per-file stats, hunks, risk flags, and —
-  for TypeScript/JavaScript — changed symbols and blast radius) so you review
-  large changesets without loading every patch into context. Prefer this over
-  reading the raw diff for any multi-file or large change.
+  for TypeScript/JavaScript/Python/Go — changed symbols and blast radius) so you
+  review large changesets without loading every patch into context. Prefer this
+  over reading the raw diff for any multi-file or large change.
 ---
 
 # code-review-distill

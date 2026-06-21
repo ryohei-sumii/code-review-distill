@@ -56,13 +56,19 @@ the middle of a long transcript.
      `blast_radius` / `referenced_by`. A changed public symbol with a wide
      blast radius is a top priority. "Public" means: exported (TS/JS),
      non-underscore module-level (Python), or capitalised (Go).
+   - When run with `--diff-json`, Layer 2 also emits an **impact-aware
+     `review_order`** (Layer 1's order re-ranked by folding in blast radius)
+     plus `prioritized` with a per-file score breakdown and `reasons`. **Prefer
+     this `review_order` over Layer 1's** when present — it surfaces small but
+     widely-used public-API changes that mechanical risk flags miss.
    - Exit `3`: expected fallback (no supported files, or grammar not installed).
      Continue with Layer 1 only — do **not** treat this as an error. To enable:
      `pip install tree-sitter tree-sitter-typescript tree-sitter-python tree-sitter-go --break-system-packages`.
 
-4. **Prioritise.** Walk `review_order` (highest risk first). Spend attention on
-   high-risk files and high-blast-radius public API changes; skim generated and
-   lock files.
+4. **Prioritise.** Walk `review_order` (highest risk first) — use Layer 2's
+   impact-aware order when it ran, else Layer 1's. Spend attention on high-risk
+   files and high-blast-radius public API changes; skim generated and lock
+   files. The `prioritized` breakdown explains why each file ranks where it does.
 
 5. **Fetch original source only where it matters.** For the prioritised files,
    read the actual diff hunks or source lines (use the `hunks` ranges from

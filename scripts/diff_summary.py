@@ -391,6 +391,10 @@ def main():
 
     files = parse_diff(text)
 
+    # Expose the per-file risk score so Layer 2 can fold blast radius into it.
+    for f in files:
+        f["risk_score"] = file_risk_score(f)
+
     ordered = sorted(files, key=file_risk_score, reverse=True)
 
     result = {

@@ -91,9 +91,48 @@ Takeaways:
   deterministic artifacts (scripts don't round numbers; the model's own context
   summarization can).
 
+## 6. Routing benchmark — the benefit is driven by blast radius, not file count
+
+`evals/benchmark_routing.py` builds changesets of N files where one changed file
+holds a public symbol used by C callers (and a breaking signature change), then
+measures, in estimated tokens, the context to **understand the impact** under:
+
+- **A** raw diff only (no impact analysis),
+- **B** raw diff + caller files (what you'd read to get impact *without* the skill),
+- **C** `route.py` output (skill, auto-routed brief/full).
+
+C vs B (% less context to get the impact), by blast radius:
+
+| files | callers=2 | callers=10 | callers=50 |
+|---|---|---|---|
+| 1  | win (brief) | **−44%** | **−86%** |
+| 2  | ~tie | **−54%** | **−86%** |
+| 5  | −40% (worse) | −3% | **−58%** |
+| 12 | worse | −13% | **−36%** |
+| 30 | worse | −18% | −11% |
+| 60 | worse | −20% | −2% |
+
+(Negative = route uses *more* tokens than reading raw + callers.)
+
+Honest reading:
+
+- **Small changes are a clear win** via the brief (44–86% less to get impact),
+  at any non-trivial blast radius. This is the routing improvement working.
+- **The win scales with blast radius (callers), not with file count.** With few
+  callers (2), the full map is net overhead beyond ~2 files — you'd be better
+  off reading the diff. With many callers (50), the full map stays positive into
+  the tens of files.
+- **Implication:** the full-map path only pays when blast radius is large; the
+  router currently decides on diff size alone, so it can over-trigger `full` on
+  big-but-low-impact diffs. A blast-radius-aware threshold (run L2 cheaply first)
+  is the logical next refinement.
+
 ## Reproducing
 
 ```bash
+# routing benefit across diff sizes and blast radii
+python evals/benchmark_routing.py --callers 10
+
 # context geometry across scales
 python scripts/needle_eval.py --files 100 --json
 

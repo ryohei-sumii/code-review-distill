@@ -468,6 +468,128 @@ def test_run_loop_predictions_perfect(tmp_path):
     assert data["metrics"]["fp"] == 0
 
 
+# --- route (auto brief/full switch) ----------------------------------------
+
+def test_route_small_picks_brief(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "a.py", "x = 1\n")
+    commit_all(repo, "init")
+    write(repo, "a.py", "x = 2\n")
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["mode"] == "brief"
+
+
+def test_route_many_files_picks_full_for_navigation(tmp_path):
+    # >= --large-files (25): ordering helps even without measured blast radius,
+    # so this holds with or without a grammar installed.
+    repo = init_repo(tmp_path)
+    for i in range(26):
+        write(repo, "m%d.py" % i, "x = 1\n")
+    commit_all(repo, "init")
+    for i in range(26):
+        write(repo, "m%d.py" % i, "x = 2\n")
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["mode"] == "full"
+    assert "review_order" in data
+
+
+@needs_ts
+def test_route_high_blast_picks_full(tmp_path):
+    # A medium changeset (below --large-files) routes to full only because a
+    # changed public symbol has high blast radius.
+    repo = init_repo(tmp_path)
+    write(repo, "m0.ts", "export function shared(a){return a;}\n")
+    for i in range(1, 6):
+        write(repo, "m%d.ts" % i, "export function fn%d(a){return a;}\n" % i)
+    for c in range(12):
+        write(repo, "c%d.ts" % c,
+              'import {shared} from "./m0"; export const v%d = shared(%d);\n' % (c, c))
+    commit_all(repo, "init")
+    write(repo, "m0.ts", "export function shared(a, b){return a + b;}\n")
+    for i in range(1, 6):
+        write(repo, "m%d.ts" % i, "export function fn%d(a){return a + 1;}\n" % i)
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["mode"] == "full"
+
+
+@needs_ts
+def test_route_medium_low_blast_picks_brief(tmp_path):
+    # Same file count, but low blast radius -> brief (avoids the full-map tax).
+    repo = init_repo(tmp_path)
+    for i in range(6):
+        write(repo, "m%d.ts" % i, "export function fn%d(a){return a;}\n" % i)
+    commit_all(repo, "init")
+    for i in range(6):
+        write(repo, "m%d.ts" % i, "export function fn%d(a){return a + 1;}\n" % i)
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["mode"] == "brief"
+
+
+def test_route_force_overrides_threshold(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "a.py", "x = 1\n")
+    commit_all(repo, "init")
+    write(repo, "a.py", "x = 2\n")
+    commit_all(repo, "change")
+    code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--force", "full", "--json", expect=0)
+    assert data["mode"] == "full"
+
+
+# --- impact_brief (small-change path) --------------------------------------
+
+def test_brief_layer1_facts_without_grammar(tmp_path):
+    # Layer 1 facts always work: file count, no-tests flag.
+    repo = init_repo(tmp_path)
+    write(repo, "a.py", "x = 1\n")
+    commit_all(repo, "init")
+    write(repo, "a.py", "x = 2\n")
+    commit_all(repo, "change")
+    code, data = run("impact_brief.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["files"] == 1
+    assert "code_changed_without_tests" in data["flags"]
+
+
+@needs_ts
+def test_brief_surfaces_blast_radius_and_breaking(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "api.ts", "export function shared(a){return a;}\n")
+    for i in range(4):
+        write(repo, "c%d.ts" % i,
+              'import {shared} from "./api"; export const v%d = shared(%d);\n' % (i, i))
+    commit_all(repo, "init")
+    write(repo, "api.ts", "export function shared(a, b){return a + b;}\n")  # breaking
+    commit_all(repo, "change")
+
+    code, data = run("impact_brief.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert any("shared" in b for b in data["breaking_changes"])
+    hi = next(h for h in data["high_impact"] if h["symbol"] == "shared")
+    assert hi["blast_radius"] == 4
+
+
+@needs_ts
+def test_brief_does_not_overclaim_on_internal_change(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "u.ts", "function helper(x){return x*2;}\nexport const v = helper(3);\n")
+    commit_all(repo, "init")
+    write(repo, "u.ts", "function helper(x){return x*3;}\nexport const v = helper(3);\n")
+    commit_all(repo, "change")
+    code, data = run("impact_brief.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["breaking_changes"] == []
+    assert data["high_impact"] == []
+
+
 # --- needle_eval (lost-in-the-middle geometry) -----------------------------
 
 def test_needle_geometry_keeps_needle_near_end(tmp_path):

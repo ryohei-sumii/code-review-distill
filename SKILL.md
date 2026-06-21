@@ -22,12 +22,44 @@ the middle of a long transcript.
 
 ## When to use vs. skip
 
-- **Use it** for multi-file changes, large hunks, refactors, or any PR where you
-  don't already hold the whole diff in mind.
-- **Skip it** for a tiny one- or two-line change — the map costs more than just
-  reading the diff. Honest constraint: the savings scale with change size.
+- **Full map** (Layer 1 → Layer 2, below) for multi-file changes, large hunks,
+  refactors, or any PR where you don't already hold the whole diff in mind.
+- **Brief** (`scripts/impact_brief.py`, below) for small changes: read the diff
+  yourself, then run the brief for the cross-repo signals you *can't* cheaply
+  compute — blast radius, breaking signature changes, test gap. A few hundred
+  bytes, net-positive even on a one-file change.
+- **Skip entirely** only when the change is trivial *and* touches no public
+  surface (no exported symbol, no callers) — then even the brief adds little.
+
+## Small-change path: `impact_brief.py`
+
+```bash
+python scripts/impact_brief.py --range main..HEAD --cwd <repo>     # text
+python scripts/impact_brief.py --staged --cwd <repo> --json        # no breaking info
+```
+Orchestrates the three tools and returns only: file/line totals, `flags`
+(`code_changed_without_tests`, …), `breaking_changes` (kept public symbols whose
+signature changed or were removed), and `high_impact` (changed public symbols by
+blast radius). Use this instead of the full map when the diff is small — you read
+the diff directly and let the brief supply the impact.
 
 ## Workflow
+
+0. **Just route it (recommended default).** One call measures the diff *and its
+   blast radius* (a cheap Layer 2 pass), then picks the path:
+   ```bash
+   python scripts/route.py --range main..HEAD --cwd <repo>
+   ```
+   - small diff → **brief**;
+   - high blast radius (`>= --min-blast`) or many files (`>= --large-files`) →
+     **full map**;
+   - large-but-low-impact → **brief** (avoids the full-map tax — see
+     FINDINGS §6).
+
+   It prints `mode: brief|full` with the reason, then the chosen output. Override
+   with `--force {brief,full}` or tune `--min-blast` / `--large-files` /
+   `--max-brief-files` / `--max-brief-lines`. Use the manual steps below only
+   when you want a specific layer or output.
 
 1. **Decide the range.**
    - Branch vs. base: `--range main..HEAD` (substitute the real base).

@@ -91,9 +91,54 @@ Takeaways:
   deterministic artifacts (scripts don't round numbers; the model's own context
   summarization can).
 
+## 6. Routing benchmark — the benefit is driven by blast radius, not file count
+
+`evals/benchmark_routing.py` builds changesets of N files where one changed file
+holds a public symbol used by C callers (and a breaking signature change), then
+measures, in estimated tokens, the context to **understand the impact** under:
+
+- **A** raw diff only (no impact analysis),
+- **B** raw diff + caller files (what you'd read to get impact *without* the skill),
+- **C** `route.py` output (skill, auto-routed brief/full).
+
+C vs B (% less context to get the impact), by blast radius. The router is
+**blast-radius-aware** (`route.py` runs a cheap L2 first): small diffs and
+medium-but-low-impact diffs take the brief; high blast radius or many files
+(navigation) take the full map.
+
+| files | callers=2 | callers=10 | callers=50 |
+|---|---|---|---|
+| 1  | brief, −41%* | brief, **−39%** | brief, **−85%** |
+| 2  | brief, **+9%** | brief, **+50%** | brief, **+85%** |
+| 5  | brief, **+53%** | full, −6% | full, **+57%** |
+| 12 | brief, **+79%** | full, −14% | full, **+35%** |
+| 30 | full(nav), −27% | full, −19% | full, +11% |
+| 60 | full(nav), −24% | full, −20% | full, −2% |
+
+(Positive = route uses fewer tokens than reading raw + callers. *the 1-file/2-caller
+cell is tiny in absolute terms: 127 vs 90 tokens.)
+
+Honest reading:
+
+- **The blast-aware router fixed the worst cells.** Low-impact medium diffs
+  (callers=2, 5–12 files) went from −40%/−13% under the old size-only router to
+  **+53%/+79%** — they now take the brief instead of paying the full-map tax.
+- **Small changes are a clear win** via the brief (39–85% less to get impact).
+- **The win scales with blast radius (callers), not file count** — the routing
+  variable that matters.
+- **Two residual negatives are real and accepted:**
+  - *navigation* — 30–60-file diffs route to full even at low blast (you can't
+    triage 60 files by eye); the impact-byte metric doesn't credit the ordering
+    the map provides, so it shows as overhead here.
+  - *threshold border* — blast exactly at `--min-blast` (10) takes full with a
+    small overhead; this is a knob, tune per repo.
+
 ## Reproducing
 
 ```bash
+# routing benefit across diff sizes and blast radii
+python evals/benchmark_routing.py --callers 10
+
 # context geometry across scales
 python scripts/needle_eval.py --files 100 --json
 

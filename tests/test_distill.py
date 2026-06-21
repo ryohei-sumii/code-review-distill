@@ -261,6 +261,55 @@ def test_layer2_integrates_impact_into_review_order(tmp_path):
     assert data["review_order"].index("api.ts") < data["review_order"].index("quiet.ts")
 
 
+@needs_ts
+def test_layer2_blast_radius_is_import_resolved(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "math.ts", "export function add(a, b){return a + b;}\n")
+    write(repo, "other.ts", "export function add(a){return a;}\n")
+    # genuine users of math.add
+    write(repo, "good_named.ts", 'import {add} from "./math"; export const a = add(1,2);\n')
+    write(repo, "good_ns.ts", 'import * as m from "./math"; export const b = m.add(1,2);\n')
+    # NOT users: same name but no import, and import from a different module
+    write(repo, "shadow.ts", "function add(x){return x;} export const c = add(5);\n")
+    write(repo, "other_user.ts", 'import {add} from "./other"; export const d = add(7);\n')
+    commit_all(repo, "init")
+
+    code, data = run("symbol_impact.py", "--root", repo, "--files", "math.ts",
+                     expect=0)
+    add = next(s for s in data["symbols"] if s["name"] == "add")
+    # old identifier matching would report 4 (2 false positives); import
+    # resolution reports exactly the two real importers.
+    assert add["blast_radius"] == 2
+    assert set(add["referenced_by"]) == {"good_named.ts", "good_ns.ts"}
+
+
+@needs_py
+def test_layer2_import_resolution_python(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "calc.py", "def add(a, b):\n    return a + b\n")
+    write(repo, "good_from.py", "from calc import add\nprint(add(1, 2))\n")
+    write(repo, "good_mod.py", "import calc\nprint(calc.add(1, 2))\n")
+    write(repo, "shadow.py", "def add(x):\n    return x\nprint(add(5))\n")
+    commit_all(repo, "init")
+
+    code, data = run("symbol_impact.py", "--root", repo, "--files", "calc.py",
+                     expect=0)
+    add = next(s for s in data["symbols"] if s["name"] == "add")
+    assert add["blast_radius"] == 2
+    assert set(add["referenced_by"]) == {"good_from.py", "good_mod.py"}
+
+
+@needs_ts
+def test_layer2_captures_signature(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "api.ts", "export function f(a: number, b: number): number { return a; }\n")
+    commit_all(repo, "init")
+    code, data = run("symbol_impact.py", "--root", repo, "--files", "api.ts",
+                     expect=0)
+    f = next(s for s in data["symbols"] if s["name"] == "f")
+    assert "a: number" in f["signature"] and "number" in f["signature"]
+
+
 def test_layer2_fallback_on_unsupported(tmp_path):
     repo = init_repo(tmp_path)
     write(repo, "notes.txt", "hello\n")
@@ -309,6 +358,35 @@ def test_refactor_pure_internal_change_preserved(tmp_path):
                      "--cwd", repo, expect=0)
     assert data["invariants"]["public_api_preserved"] is True
     assert "public_api_changed_during_refactor" not in data["flags"]
+
+
+@needs_ts
+def test_refactor_detects_signature_breaking_change(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "api.ts",
+          "export function process(a: number, b: number): number { return a + b; }\n"
+          "export function stable(x: number): number { return x; }\n")
+    commit_all(repo, "init")
+    # same symbol name, but params reordered + new param + return type changed:
+    # a breaking change that the public-api set comparison alone cannot see.
+    write(repo, "api.ts",
+          "export function process(b: number, a: number, c: number): string { return ''; }\n"
+          "export function stable(x: number): number { return x; }\n")
+    commit_all(repo, "breaking signature change")
+
+    code, data = run("refactor_check.py", "--range", "HEAD~1..HEAD",
+                     "--cwd", repo, expect=0)
+    # the symbol set is unchanged, so public_api_preserved stays True ...
+    assert data["invariants"]["public_api_preserved"] is True
+    # ... but the signature change is caught:
+    assert data["invariants"]["signatures_preserved"] is False
+    assert "public_signature_changed" in data["flags"]
+    assert "function process" in data["invariants"]["public_signatures_changed"]
+    changes = [c for f in data["files"] for c in f["signature_changes"]]
+    proc = next(c for c in changes if c["name"] == "process")
+    assert proc["public"] is True and proc["old"] != proc["new"]
+    # the unchanged function is not flagged
+    assert all(c["name"] != "stable" for c in changes)
 
 
 # --- flow_map --------------------------------------------------------------

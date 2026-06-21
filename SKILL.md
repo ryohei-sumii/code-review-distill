@@ -95,7 +95,9 @@ Reach for these when the task is adjacent to a plain review:
 - **Refactor verification** — `scripts/refactor_check.py --range base..head
   --cwd <repo>`. Compares symbols at both revisions and flags when a "pure
   refactor" silently changed the public API
-  (`public_api_changed_during_refactor`). Use when the user calls something a
+  (`public_api_changed_during_refactor`) or changed a kept symbol's **signature**
+  (`public_signature_changed` — param reorder / type / return change, which
+  breaks callers while keeping the name). Use when the user calls something a
   refactor and you need to confirm behaviour/API was preserved.
 - **Process flow** — `scripts/flow_map.py --dir <src>` emits a Mermaid
   `flowchart` of the internal call graph; `--sequence ENTRY` traces a

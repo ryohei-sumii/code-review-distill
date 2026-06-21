@@ -7,8 +7,10 @@ report so an agent can verify that quickly without diffing every file:
 
   * change map     - which files changed and how their symbol set shifted.
   * symbol table   - the union of symbols, with before/after presence.
-  * invariants     - flags when a "pure refactor" silently altered the
-                     public API (added / removed / renamed exported symbols).
+  * invariants     - flags when a "pure refactor" silently altered the public
+                     API: added / removed / renamed exported symbols, OR a kept
+                     symbol whose *signature* changed (param reorder / type /
+                     return change) — a breaking change the set comparison misses.
 
 It reuses the Layer 2 multi-language extractors from symbol_impact.py, so it
 supports the same languages (typescript / javascript / python / go) and falls
@@ -25,13 +27,16 @@ Output (stdout) JSON:
       "files": [
         {"path","language","status",
          "added_symbols":[...], "removed_symbols":[...], "kept_symbols": N,
-         "public_api_added":[...], "public_api_removed":[...]}
+         "public_api_added":[...], "public_api_removed":[...],
+         "signature_changes":[{"kind","name","public","old","new"}]}
       ],
       "invariants": {
         "public_api_preserved": bool,
-        "public_api_added":[...], "public_api_removed":[...]
+        "public_api_added":[...], "public_api_removed":[...],
+        "signatures_preserved": bool, "public_signatures_changed":[...]
       },
-      "flags": ["public_api_changed_during_refactor", ...]
+      "flags": ["public_api_changed_during_refactor",
+                "public_signature_changed", ...]
     }
 
 Exit codes: 0 ok; 3 graceful fallback (no grammar / no supported files);
@@ -92,7 +97,7 @@ def changed_files(base, head, cwd):
 
 
 def symbols_at(rev, path, lang, parsers, cwd):
-    """Extract {(kind,name): exported} for `path` at revision `rev`, or {}."""
+    """Extract {(kind,name): {"exported","signature"}} for `path` at `rev`."""
     if path is None:
         return {}
     parser = parsers.get(lang)
@@ -104,8 +109,8 @@ def symbols_at(rev, path, lang, parsers, cwd):
     tree = parser.parse(src)
     extractor = si.LANGS[lang]["extract"]
     table = {}
-    for kind, name, exported in extractor(src, tree.root_node):
-        table[(kind, name)] = exported
+    for kind, name, exported, signature in extractor(src, tree.root_node):
+        table[(kind, name)] = {"exported": exported, "signature": signature}
     return table
 
 
@@ -161,6 +166,7 @@ def main():
     files_out = []
     global_api_added = []
     global_api_removed = []
+    global_sig_changes = []
 
     for status, old, new, lang in relevant:
         if lang not in parsers:
@@ -172,14 +178,31 @@ def main():
         after_keys = set(after)
         added = sorted("%s %s" % (k, n) for (k, n) in (after_keys - before_keys))
         removed = sorted("%s %s" % (k, n) for (k, n) in (before_keys - after_keys))
-        kept = len(before_keys & after_keys)
+        kept = before_keys & after_keys
 
         api_added = sorted("%s %s" % (k, n) for (k, n) in (after_keys - before_keys)
-                           if after.get((k, n)))
+                           if after[(k, n)]["exported"])
         api_removed = sorted("%s %s" % (k, n) for (k, n) in (before_keys - after_keys)
-                             if before.get((k, n)))
+                             if before[(k, n)]["exported"])
         global_api_added.extend(api_added)
         global_api_removed.extend(api_removed)
+
+        # A symbol kept across the refactor whose signature changed is a
+        # breaking change that set-comparison alone misses (param reorder /
+        # type / return change keeps the name but breaks every caller).
+        sig_changes = []
+        for (k, n) in sorted(kept):
+            b_sig = before[(k, n)]["signature"]
+            a_sig = after[(k, n)]["signature"]
+            if b_sig and a_sig and b_sig != a_sig:
+                public = before[(k, n)]["exported"] or after[(k, n)]["exported"]
+                change = {
+                    "kind": k, "name": n, "public": public,
+                    "old": b_sig, "new": a_sig,
+                }
+                sig_changes.append(change)
+                if public:
+                    global_sig_changes.append("%s %s" % (k, n))
 
         files_out.append({
             "path": new or old,
@@ -187,15 +210,19 @@ def main():
             "status": status,
             "added_symbols": added,
             "removed_symbols": removed,
-            "kept_symbols": kept,
+            "kept_symbols": len(kept),
             "public_api_added": api_added,
             "public_api_removed": api_removed,
+            "signature_changes": sig_changes,
         })
 
     api_preserved = not (global_api_added or global_api_removed)
+    signatures_preserved = not global_sig_changes
     flags = []
     if not api_preserved:
         flags.append("public_api_changed_during_refactor")
+    if not signatures_preserved:
+        flags.append("public_signature_changed")
     if any(f["status"] == "deleted" for f in files_out):
         flags.append("files_deleted")
 
@@ -208,6 +235,8 @@ def main():
             "public_api_preserved": api_preserved,
             "public_api_added": sorted(set(global_api_added)),
             "public_api_removed": sorted(set(global_api_removed)),
+            "signatures_preserved": signatures_preserved,
+            "public_signatures_changed": sorted(set(global_sig_changes)),
         },
         "flags": flags,
     }

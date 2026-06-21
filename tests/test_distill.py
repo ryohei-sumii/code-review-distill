@@ -283,6 +283,27 @@ def test_layer2_blast_radius_is_import_resolved(tmp_path):
     assert set(add["referenced_by"]) == {"good_named.ts", "good_ns.ts"}
 
 
+@needs_ts
+def test_layer2_import_resolution_no_false_positive_across_statements(tmp_path):
+    # A semicolon-less `export { foo }` immediately followed by an import from
+    # the defining module must NOT be glued together (regex over-reach).
+    repo = init_repo(tmp_path)
+    write(repo, "mod.ts", "export function foo(a){return a;}\n")
+    write(repo, "mod2.ts", "export function bar(){return 2;}\n")
+    write(repo, "tricky.ts",
+          "const foo = 1\n"
+          "export { foo }\n"
+          'import { bar } from "./mod2"\n'
+          "export const baz = bar\n")
+    commit_all(repo, "init")
+
+    code, data = run("symbol_impact.py", "--root", repo, "--files", "mod.ts",
+                     expect=0)
+    foo = next(s for s in data["symbols"] if s["name"] == "foo")
+    # tricky.ts re-exports its OWN local foo and imports bar (not foo) from mod2
+    assert foo["blast_radius"] == 0
+
+
 @needs_py
 def test_layer2_import_resolution_python(tmp_path):
     repo = init_repo(tmp_path)

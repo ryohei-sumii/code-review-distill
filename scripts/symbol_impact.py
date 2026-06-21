@@ -393,8 +393,11 @@ def iter_source_files(root, exts):
 # scope (precision-biased: such cases are missed rather than over-counted).
 
 TS_RESOLVE_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
+# bindings span at most one brace group and never cross a `{`, `}` or `;`, so a
+# semicolon-less `export { x }` can't be glued onto a following import's module.
 _TS_FROM_RE = re.compile(
-    r'\b(?:import|export)\b(?P<bindings>[^;]*?)\bfrom\s*["\'](?P<mod>[^"\']+)["\']')
+    r'\b(?:import|export)\b(?P<bindings>[^;{}]*(?:\{[^}]*\})?[^;{}]*?)\bfrom\s*'
+    r'["\'](?P<mod>[^"\']+)["\']')
 _TS_REQUIRE_RE = re.compile(r'\brequire\(\s*["\'](?P<mod>[^"\']+)["\']\s*\)')
 _PY_FROM_RE = re.compile(
     r'^[ \t]*from[ \t]+(?P<dots>\.*)(?P<mod>[\w.]*)[ \t]+import[ \t]+(?P<names>.+)$', re.M)

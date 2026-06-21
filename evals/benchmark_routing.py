@@ -99,9 +99,12 @@ def measure(n_files, callers):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--callers", type=int, default=10)
+    p.add_argument("--sizes", help="comma-separated file counts (default %s)"
+                   % ",".join(map(str, SIZES)))
     args = p.parse_args()
 
-    rows = [measure(n, args.callers) for n in SIZES]
+    sizes = [int(x) for x in args.sizes.split(",")] if args.sizes else SIZES
+    rows = [measure(n, args.callers) for n in sizes]
     print("routing benefit — estimated tokens (~4 chars/token), %d callers of the "
           "changed public symbol\n" % args.callers)
     print("  %-7s | %-10s | %-22s | %-14s | %-6s" %

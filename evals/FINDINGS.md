@@ -133,6 +133,27 @@ Honest reading:
   - *threshold border* — blast exactly at `--min-blast` (10) takes full with a
     small overhead; this is a knob, tune per repo.
 
+## 7. Large scale — the full map grows past the raw diff (a cap is needed)
+
+Pushing the benchmark to hundreds of files (estimated tokens):
+
+| files | raw diff | route full map | map / raw |
+|---|---|---|---|
+| 100 | 5,665 | 7,021 | 124% |
+| 300 | 17,315 | 21,071 | 122% |
+| 600 | 34,790 | 42,146 | 121% |
+
+The full map is **consistently larger than the raw diff** (~121–124%), at both
+low and high blast radius. It lists *every* changed file plus symbols and reasons
+in `review_order` / `prioritized`, so it grows linearly with N and overtakes the
+diff — it does **not** shrink context at scale.
+
+The fix this points to: the full map only needs the **top-N priorities**, not a
+full ranking of all 600 files. Capping `review_order` / `prioritized` to a top-N
+(with a "+M more" count) would make the map bounded and sublinear at scale —
+finally smaller than the raw diff — without losing the triage value (the long
+tail is low priority by construction). Not yet implemented.
+
 ## Reproducing
 
 ```bash

@@ -12,6 +12,12 @@ in the middle of a long transcript.
 > Honest constraint: the savings scale with change size. For a one- or two-line
 > diff, just read it — the map costs more than it saves. The win shows up on
 > multi-file / large changesets.
+>
+> What this measurably does and does **not** do is recorded in
+> [`evals/FINDINGS.md`](evals/FINDINGS.md): the value is context-cost reduction
+> on large-file / impact-analysis reviews, **not** improved bug detection (a
+> blind eval found no detection gain, and signal-less logic bugs are ranked
+> last). Read it before trusting the pitch.
 
 ## Layout
 

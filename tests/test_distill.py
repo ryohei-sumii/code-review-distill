@@ -214,9 +214,18 @@ def test_layer2_compact_caps_referenced_by(tmp_path):
     code, data = run("symbol_impact.py", "--root", repo, "--files", "core.ts",
                      "--compact", expect=0)
     p = next(s for s in data["symbols"] if s["name"] == "p")
-    # full count preserved, list trimmed
+    # full count preserved, list trimmed, truncation made explicit
     assert p["blast_radius"] == 10
     assert len(p["referenced_by"]) <= 5
+    assert p.get("referenced_by_truncated") is True
+
+    # --max-refs 0 restores the full list with no truncation marker
+    code, full = run("symbol_impact.py", "--root", repo, "--files", "core.ts",
+                     "--compact", "--max-refs", 0, expect=0)
+    pf = next(s for s in full["symbols"] if s["name"] == "p")
+    assert pf["blast_radius"] == 10
+    assert len(pf["referenced_by"]) == 10
+    assert "referenced_by_truncated" not in pf
 
 
 def test_layer2_fallback_on_unsupported(tmp_path):

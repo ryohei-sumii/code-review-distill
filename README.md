@@ -83,6 +83,10 @@ python scripts/symbol_impact.py --root <repo> --files a.ts b.py c.go
 # referenced_by capped) for ~40-60% smaller maps on large changesets:
 python scripts/diff_summary.py --range main..HEAD --cwd <repo> --compact
 python scripts/symbol_impact.py --root <repo> --diff-json /tmp/l1.json --compact
+# --compact never rounds numbers: all stats and blast_radius stay exact. The
+# only summarization is referenced_by being capped (marked referenced_by_truncated);
+# use --max-refs 0 for the full caller list, or a higher cap.
+python scripts/symbol_impact.py --root <repo> --diff-json /tmp/l1.json --compact --max-refs 0
 
 # Companion: verify a "refactor" didn't change the public API
 python scripts/refactor_check.py --range main..HEAD --cwd <repo>

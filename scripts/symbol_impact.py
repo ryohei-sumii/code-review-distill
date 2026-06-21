@@ -352,6 +352,9 @@ def main():
     p.add_argument("--compact", action="store_true",
                    help="minified JSON, empty fields dropped, referenced_by capped "
                         "(blast_radius keeps the full count) — ~half the size")
+    p.add_argument("--max-refs", type=int, default=MAX_REFS_COMPACT,
+                   help="in --compact, cap referenced_by to this many entries "
+                        "(0 = unlimited); blast_radius is always the exact count")
     args = p.parse_args()
 
     root = os.path.abspath(args.root)
@@ -469,11 +472,13 @@ def main():
     if public_api_changes:
         impact_flags.append("public_api_changed")
 
-    if args.compact:
-        # Keep the true count in blast_radius; trim the (potentially huge) list.
+    if args.compact and args.max_refs > 0:
+        # Keep the true count in blast_radius; trim the (potentially huge) list
+        # and mark it explicitly so a partial list is never mistaken for whole.
         for sym in symbols:
-            if len(sym["referenced_by"]) > MAX_REFS_COMPACT:
-                sym["referenced_by"] = sym["referenced_by"][:MAX_REFS_COMPACT]
+            if len(sym["referenced_by"]) > args.max_refs:
+                sym["referenced_by"] = sym["referenced_by"][:args.max_refs]
+                sym["referenced_by_truncated"] = True
 
     result = {
         "ok": True,

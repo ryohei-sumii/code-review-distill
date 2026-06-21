@@ -45,15 +45,21 @@ the diff directly and let the brief supply the impact.
 
 ## Workflow
 
-0. **Just route it (recommended default).** One call measures the diff and picks
-   the brief (small) or the full map (large) for you:
+0. **Just route it (recommended default).** One call measures the diff *and its
+   blast radius* (a cheap Layer 2 pass), then picks the path:
    ```bash
    python scripts/route.py --range main..HEAD --cwd <repo>
    ```
-   It prints `mode: brief` or `mode: full` with the reason, then the chosen
-   output. Override with `--force {brief,full}` or tune `--max-brief-files` /
-   `--max-brief-lines`. Use the manual steps below only when you want a specific
-   layer or output.
+   - small diff → **brief**;
+   - high blast radius (`>= --min-blast`) or many files (`>= --large-files`) →
+     **full map**;
+   - large-but-low-impact → **brief** (avoids the full-map tax — see
+     FINDINGS §6).
+
+   It prints `mode: brief|full` with the reason, then the chosen output. Override
+   with `--force {brief,full}` or tune `--min-blast` / `--large-files` /
+   `--max-brief-files` / `--max-brief-lines`. Use the manual steps below only
+   when you want a specific layer or output.
 
 1. **Decide the range.**
    - Branch vs. base: `--range main..HEAD` (substitute the real base).

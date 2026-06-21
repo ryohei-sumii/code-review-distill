@@ -325,3 +325,30 @@ def test_run_loop_predictions_perfect(tmp_path):
     assert data["metrics"]["precision"] == 1.0
     assert data["metrics"]["recall"] == 1.0
     assert data["metrics"]["fp"] == 0
+
+
+# --- needle_eval (lost-in-the-middle geometry) -----------------------------
+
+def test_needle_geometry_keeps_needle_near_end(tmp_path):
+    # Layer 1 only is enough; symbol_impact falls back gracefully if no grammar.
+    code, data = run("needle_eval.py", "--files", 20, "--repeats", 1,
+                     "--kind", "quiet", "--json", expect=0)
+    start = next(r for r in data["by_position"] if r["position"] == "start")
+    # In raw review a start-placed needle is far from the end; distilled keeps
+    # it at the very end (recency) -> much smaller from_end.
+    assert start["B_from_end_tokens"] < start["A_from_end_tokens"]
+    assert start["B_rel_pos"] >= 0.9
+    # And the recency distance is small regardless of placement.
+    for r in data["by_position"]:
+        assert r["B_from_end_tokens"] <= 80
+
+
+def test_needle_emit_cases_hides_marker(tmp_path):
+    out = tmp_path / "cases"
+    code, text = run("needle_eval.py", "--emit-cases", str(out), "--files", 8,
+                     "--kind", "quiet", expect=0)
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert len(manifest) == 3
+    for f in out.glob("*.txt"):
+        assert "NEEDLE" not in f.read_text(), "marker leaked into judge input %s" % f
+

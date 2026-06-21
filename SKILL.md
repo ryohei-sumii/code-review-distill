@@ -98,6 +98,11 @@ Reach for these when the task is adjacent to a plain review:
 - **Trigger tuning** — `scripts/run_loop.py` scores this `description` against
   `evals/trigger_evalset.json` (precision/recall/trigger-rate, plus words to
   add or reconsider). Use when iterating the skill's own activation accuracy.
+- **Lost-in-the-middle eval** — `scripts/needle_eval.py` plants one defect in a
+  changeset and measures the context geometry (total tokens, needle distance
+  from the context end) for raw-diff vs distilled review. `--emit-cases` /
+  `--predictions` add a real model-judge detection-rate path. Use to justify or
+  quantify the skill's benefit, not during a normal review.
 
 ## Output reference
 

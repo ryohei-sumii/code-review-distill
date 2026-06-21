@@ -23,7 +23,8 @@ code-review-distill/
 │   ├── symbol_impact.py        # Layer 2 (TS/JS/Python/Go) — blast radius
 │   ├── refactor_check.py       # companion: refactor invariant checker
 │   ├── flow_map.py             # companion: call graph -> Mermaid
-│   └── run_loop.py             # companion: SKILL.md trigger-accuracy eval loop
+│   ├── run_loop.py             # companion: SKILL.md trigger-accuracy eval loop
+│   └── needle_eval.py          # companion: lost-in-the-middle geometry eval
 ├── evals/
 │   └── trigger_evalset.json    # labelled prompts for run_loop.py
 └── tests/
@@ -94,6 +95,11 @@ python scripts/flow_map.py --dir <repo>/src --json          # raw graph
 # Companion: measure the SKILL.md description's trigger accuracy
 python scripts/run_loop.py                                  # heuristic baseline
 python scripts/run_loop.py --predictions preds.json --json  # real judgments
+
+# Companion: quantify the lost-in-the-middle benefit (context geometry)
+python scripts/needle_eval.py --files 60                    # raw vs distilled geometry
+python scripts/needle_eval.py --emit-cases /tmp/cases       # inputs for a real judge
+python scripts/needle_eval.py --predictions preds.json --manifest /tmp/cases/manifest.json
 ```
 
 ## Output schemas (quick reference)

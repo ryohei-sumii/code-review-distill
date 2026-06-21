@@ -69,7 +69,7 @@ def main():
                    help="a diff this small is always the brief (default 60 lines)")
     p.add_argument("--min-blast", type=int, default=DEFAULT_MIN_BLAST,
                    help="go full when a changed public symbol has >= this blast "
-                        "radius (default 5)")
+                        "radius (default %d)" % DEFAULT_MIN_BLAST)
     p.add_argument("--large-files", type=int, default=DEFAULT_LARGE_FILES,
                    help="go full when >= this many files change, regardless of "
                         "impact (ordering helps) (default 25)")
@@ -88,29 +88,41 @@ def main():
     files = totals.get("files", 0)
     lines = totals.get("additions", 0) + totals.get("deletions", 0)
 
-    # Impact pass (Layer 2) — reused for the full map if we pick it.
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
-        json.dump(l1, fh)
-        l1_path = fh.name
-    try:
-        l2 = run_json("symbol_impact.py", "--root", cwd, "--diff-json", l1_path, "--compact")
-    finally:
-        os.unlink(l1_path)
-    max_blast = 0
-    if l2 and l2.get("ok"):
-        max_blast = max((s.get("blast_radius", 0) for s in l2.get("symbols", [])
-                         if s.get("exported")), default=0)
+    # Layer 2 (whole-repo scan) is computed lazily and at most once: a small diff
+    # short-circuits to the brief without needing it, so we never pay for it there.
+    l2_box = {}
 
+    def get_l2():
+        if "v" not in l2_box:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                json.dump(l1, fh)
+                l1_path = fh.name
+            try:
+                l2_box["v"] = run_json("symbol_impact.py", "--root", cwd,
+                                       "--diff-json", l1_path, "--compact")
+            finally:
+                os.unlink(l1_path)
+        return l2_box["v"]
+
+    small = files <= args.max_brief_files and lines <= args.max_brief_lines
     if args.force:
         mode, reason = args.force, "forced"
+    elif small:
+        mode = "brief"
+        reason = "%d file(s), %d line(s) <= brief thresholds (%d/%d)" % (
+            files, lines, args.max_brief_files, args.max_brief_lines)
+    elif files >= args.large_files:
+        mode = "full"
+        reason = "%d file(s) >= %d -> full (ordering helps)" % (files, args.large_files)
     else:
-        small = files <= args.max_brief_files and lines <= args.max_brief_lines
-        worth_full = max_blast >= args.min_blast or files >= args.large_files
-        mode = "brief" if (small or not worth_full) else "full"
+        l2 = get_l2()
+        max_blast = 0
+        if l2 and l2.get("ok"):
+            max_blast = max((s.get("blast_radius", 0) for s in l2.get("symbols", [])
+                             if s.get("exported")), default=0)
+        mode = "full" if max_blast >= args.min_blast else "brief"
         reason = ("%d file(s), %d line(s), max blast radius %d -> %s "
-                  "(full needs >%d files/%d lines and (blast>=%d or files>=%d))"
-                  % (files, lines, max_blast, mode, args.max_brief_files,
-                     args.max_brief_lines, args.min_blast, args.large_files))
+                  "(full when blast >= %d)" % (files, lines, max_blast, mode, args.min_blast))
 
     if mode == "brief":
         payload = run_json("impact_brief.py", "--cwd", cwd, "--json", *scope)
@@ -124,7 +136,8 @@ def main():
             sys.stdout.write(text)
         return
 
-    # full map: reuse the L1/L2 already computed for the routing decision.
+    # full map: reuse the L1/L2 (L2 is memoized — computed once at most).
+    l2 = get_l2()
     review_order = (l2 or {}).get("review_order") or l1.get("review_order", [])
     out = {
         "mode": "full",

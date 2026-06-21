@@ -35,6 +35,7 @@ code-review-distill/
 │   ├── refactor_check.py       # companion: refactor invariant checker
 │   ├── route.py                # entry point: auto-picks brief vs full by diff size
 │   ├── impact_brief.py         # small-change path: cross-repo signals only
+│   ├── diff_patterns.py        # large-scale: lossless pattern compression
 │   ├── flow_map.py             # companion: call graph -> Mermaid
 │   ├── run_loop.py             # companion: SKILL.md trigger-accuracy eval loop
 │   └── needle_eval.py          # companion: lost-in-the-middle geometry eval
@@ -89,6 +90,11 @@ Layer 1 alone. "Public" means exported (TS/JS), non-underscore module-level
 python scripts/route.py --range main..HEAD --cwd <repo>
 python scripts/route.py --range main..HEAD --cwd <repo> --force full   # override
 python scripts/route.py --range main..HEAD --cwd <repo> --max-brief-files 5
+# Large changesets (>= --large-files) also get a `large_scale` block: lossless
+# pattern compression + deterministic checks + a fan-out review plan.
+
+# Lossless pattern compression on its own (collapse codemod/repeated hunks)
+python scripts/diff_patterns.py --range main..HEAD --cwd <repo>
 
 # Or drive the layers manually:
 # Layer 1: structure the diff (branch vs base / staged / a saved patch)

@@ -494,7 +494,10 @@ def test_route_many_files_picks_full_for_navigation(tmp_path):
     code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
                      "--json", expect=0)
     assert data["mode"] == "full"
-    assert "review_order" in data
+    # >= --large-files: the large-scale toolkit (patterns/checks/fan-out) is on,
+    # and the verbose per-file fields are replaced by the compressed view.
+    assert "large_scale" in data
+    assert "review_order" not in data
 
 
 @needs_ts
@@ -542,6 +545,50 @@ def test_route_force_overrides_threshold(tmp_path):
     code, data = run("route.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
                      "--force", "full", "--json", expect=0)
     assert data["mode"] == "full"
+
+
+# --- diff_patterns (lossless pattern compression) --------------------------
+
+def test_patterns_collapse_codemod(tmp_path):
+    repo = init_repo(tmp_path)
+    for i in range(20):
+        write(repo, "m%d.ts" % i, "export function fn%d(a){ return a; }\n" % i)
+    write(repo, "special.ts", "export function special(a){ return a; }\n")
+    commit_all(repo, "init")
+    for i in range(20):  # identical structural edit
+        write(repo, "m%d.ts" % i, "export function fn%d(a){ return a + 1; }\n" % i)
+    write(repo, "special.ts", "export function special(a){ return a * 2 - 1; }\n")
+    commit_all(repo, "change")
+
+    code, data = run("diff_patterns.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    assert data["compression"]["changed_files"] == 21
+    # the 20 identical edits collapse to one pattern; special is unique
+    assert any(p["count"] == 20 for p in data["patterns"])
+    assert "special.ts" in data["unique"]
+    # lossless: every changed file is covered by a pattern or unique
+    covered = set(data["unique"])
+    for p in data["patterns"]:
+        covered |= set(p["files"])
+    assert len(covered) == 21
+
+
+def test_patterns_do_not_overmerge_distinct_changes(tmp_path):
+    repo = init_repo(tmp_path)
+    for i in range(6):
+        write(repo, "m%d.ts" % i, "export function fn%d(a){ return a; }\n" % i)
+    commit_all(repo, "init")
+    # two structurally different edits, 3 files each
+    for i in range(6):
+        if i % 2 == 0:
+            write(repo, "m%d.ts" % i, "export function fn%d(a){ return a + 1; }\n" % i)
+        else:
+            write(repo, "m%d.ts" % i, "export function fn%d(a){ if (a) return a; return 0; }\n" % i)
+    commit_all(repo, "change")
+    code, data = run("diff_patterns.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    # not collapsed into one: the two shapes stay separate
+    assert len(data["patterns"]) == 2
 
 
 # --- impact_brief (small-change path) --------------------------------------

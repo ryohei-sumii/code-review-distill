@@ -148,11 +148,18 @@ low and high blast radius. It lists *every* changed file plus symbols and reason
 in `review_order` / `prioritized`, so it grows linearly with N and overtakes the
 diff — it does **not** shrink context at scale.
 
-The fix this points to: the full map only needs the **top-N priorities**, not a
-full ranking of all 600 files. Capping `review_order` / `prioritized` to a top-N
-(with a "+M more" count) would make the map bounded and sublinear at scale —
-finally smaller than the raw diff — without losing the triage value (the long
-tail is low priority by construction). Not yet implemented.
+**Addressed (without dropping accuracy).** Rather than cap the file list (which
+would hide files — unacceptable), large changesets (`route.py`, `>= --large-files`)
+switch to *structured process*: lossless **pattern compression** (repeated/codemod
+hunks collapse to one example + the full member list), **deterministic checks**
+(violations only), and a **fan-out review plan** over the distinct units. Every
+changed file is still enumerated (in a pattern's members or as unique), so nothing
+is hidden; the verbose `review_order`/`prioritized` are dropped because patterns +
+unique already cover all files. Measured: a 600-file codemod went from ~121% of
+the raw diff to **~14%** (4.0k vs 27k tokens), and a genuinely diverse 40-file
+change is grouped by structural shape without over-merging. Non-repetitive large
+diffs don't compress (honest: there is nothing to collapse) but still get checks +
+fan-out.
 
 ## Reproducing
 

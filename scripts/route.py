@@ -57,6 +57,56 @@ def run_json(script, *args):
         return None
 
 
+FANOUT_BATCH = 10
+
+
+def build_large_scale(cwd, scope, l1, l2, has_range):
+    """Enable the large-scale toolkit: pattern compression (3), deterministic
+    checks (2), and a fan-out review plan (1). Only called for big changesets."""
+    # (3) lossless pattern compression — collapse repeated/codemod hunks.
+    patterns = run_json("diff_patterns.py", "--cwd", cwd, "--json", *scope) or {}
+    pat_list = patterns.get("patterns", [])
+    unique = patterns.get("unique", [])
+
+    # (1) fan-out plan: one representative per pattern + every unique file are the
+    # distinct units to review (each in its own isolated context / sub-agent).
+    units = [p["example_file"] for p in pat_list] + unique
+    batches = [units[i:i + FANOUT_BATCH] for i in range(0, len(units), FANOUT_BATCH)]
+
+    # (2) deterministic checks — surface only violations, independent of N.
+    breaking = []
+    if has_range:
+        rc = run_json("refactor_check.py", "--range", scope[1], "--cwd", cwd)
+        if rc and rc.get("ok"):
+            inv = rc.get("invariants", {})
+            breaking = sorted(set(inv.get("public_signatures_changed", []))
+                              | set(inv.get("public_api_removed", [])))
+
+    # the signal-bearing public changes (replaces the verbose per-file list).
+    high_impact = []
+    if l2 and l2.get("ok"):
+        pub = [s for s in l2.get("symbols", [])
+               if s.get("exported") and s.get("blast_radius", 0) > 0]
+        pub.sort(key=lambda s: -s["blast_radius"])
+        high_impact = [{"symbol": s["name"], "file": s["file"],
+                        "blast_radius": s["blast_radius"]} for s in pub[:20]]
+
+    return {
+        "compression": patterns.get("compression", {}),
+        "patterns": [{"count": p["count"], "example_file": p["example_file"],
+                      "files": p["files"], "example_hunk": p["example_hunk"]}
+                     for p in pat_list],
+        "unique": unique,
+        "high_impact": high_impact,
+        "review_batches": batches,
+        "checks": {
+            "risk_flags": l1.get("risk_flags", []),
+            "impact_flags": (l2 or {}).get("impact_flags", []),
+            "breaking_changes": breaking,
+        },
+    }
+
+
 def main():
     p = argparse.ArgumentParser(description="Auto-route a review to brief or full map")
     p.add_argument("--range", help="git range base..head")
@@ -148,6 +198,18 @@ def main():
         "impact_flags": (l2 or {}).get("impact_flags", []),
         "prioritized": (l2 or {}).get("prioritized", []),
     }
+    # Large scale only: turn on pattern compression (3) + deterministic checks
+    # (2) + a fan-out review plan (1). The compressed view (patterns + unique)
+    # covers every changed file losslessly, so the verbose per-file `prioritized`
+    # (reasons x N — the bloat) is dropped here; `review_order` (paths only) and
+    # the signal-bearing `high_impact` are kept.
+    if files >= args.large_files:
+        out["large_scale"] = build_large_scale(cwd, scope, l1, l2, bool(args.range))
+        # patterns + unique enumerate every changed file losslessly, so the two
+        # O(N) verbose fields are redundant here and dropped to keep it bounded.
+        out.pop("prioritized", None)
+        out.pop("review_order", None)
+
     if args.json:
         json.dump(out, sys.stdout, indent=2)
         sys.stdout.write("\n")
@@ -158,6 +220,25 @@ def main():
         print("risk: " + ", ".join(out["risk_flags"]))
     if out["impact_flags"]:
         print("impact: " + ", ".join(out["impact_flags"]))
+    ls = out.get("large_scale")
+    if ls:
+        c = ls["compression"]
+        print("large-scale toolkit:")
+        print("  patterns: %d changed files -> %d distinct review units (%d collapsed)"
+              % (c.get("changed_files", 0), c.get("distinct_units", 0),
+                 c.get("collapsed_files", 0)))
+        for i, pat in enumerate(ls["patterns"][:5], 1):
+            print("    pattern %d: %d files like %s" % (i, pat["count"], pat["example_file"]))
+        if ls["checks"]["breaking_changes"]:
+            print("  BREAKING: " + ", ".join(ls["checks"]["breaking_changes"]))
+        print("  fan-out: review %d batch(es) of <=%d units in isolated context"
+              % (len(ls["review_batches"]), FANOUT_BATCH))
+        if ls["high_impact"]:
+            print("  high impact:")
+            for h in ls["high_impact"][:10]:
+                print("    %s (%s) — %d caller file(s)"
+                      % (h["symbol"], h["file"], h["blast_radius"]))
+        return
     print("review in this order (highest priority first):")
     for r in (out["prioritized"][:10] or [{"path": p} for p in review_order[:10]]):
         reasons = ("  — " + "; ".join(r["reasons"])) if r.get("reasons") else ""

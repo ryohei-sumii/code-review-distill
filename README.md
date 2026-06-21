@@ -110,8 +110,8 @@ python scripts/needle_eval.py --predictions preds.json --manifest /tmp/cases/man
 
 | Script | Output |
 |---|---|
-| `diff_summary.py` | `{ source, totals, files[], risk_flags[], review_order[] }`; each file has `path, status, language, additions, deletions, is_test, is_generated, hunks[], risk_flags[]` |
-| `symbol_impact.py` | `{ ok, languages[], analyzed_files[], symbols[], public_api_changes[], impact_flags[] }`, or `{ ok:false, note }` (exit 3) |
+| `diff_summary.py` | `{ source, totals, files[], risk_flags[], review_order[] }`; each file has `path, status, language, additions, deletions, risk_score, is_test, is_generated, hunks[], risk_flags[]` |
+| `symbol_impact.py` | `{ ok, languages[], analyzed_files[], symbols[], public_api_changes[], impact_flags[] }`, or `{ ok:false, note }` (exit 3). With `--diff-json`, also emits an **impact-aware** `review_order[]` + `prioritized[]` (Layer 1 order re-ranked by blast radius, with score breakdown and `reasons`) |
 | `refactor_check.py` | `{ ok, base, head, files[], invariants{public_api_preserved, …}, flags[] }` |
 | `flow_map.py` | Mermaid text, or `{ nodes[], edges[], external_calls{} }` with `--json` |
 | `run_loop.py` | `{ mode, metrics{precision,recall,f1,trigger_rate,…}, suggestions{} }` |

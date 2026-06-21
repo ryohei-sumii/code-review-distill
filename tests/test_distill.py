@@ -228,6 +228,39 @@ def test_layer2_compact_caps_referenced_by(tmp_path):
     assert "referenced_by_truncated" not in pf
 
 
+@needs_ts
+def test_layer2_integrates_impact_into_review_order(tmp_path):
+    repo = init_repo(tmp_path)
+    # a tiny public-API change used by several callers + a quiet self-contained file
+    write(repo, "api.ts", "export function shared(a){return a;}\n")
+    for i in range(6):
+        write(repo, "c%d.ts" % i,
+              'import {shared} from "./api"; export const v%d = shared(%d);\n' % (i, i))
+    write(repo, "quiet.ts", "function helper(){return 1;}\nexport const z = helper();\n")
+    commit_all(repo, "init")
+    write(repo, "api.ts", "export function shared(a, b){return a + b;}\n")
+    write(repo, "quiet.ts", "function helper(){return 2;}\nexport const z = helper();\n")
+    commit_all(repo, "change")
+
+    l1 = tmp_path / "l1.json"
+    _, l1data = run("diff_summary.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                    expect=0)
+    l1.write_text(json.dumps(l1data))
+    # Layer 1 exposes a risk_score per file now
+    assert all("risk_score" in f for f in l1data["files"])
+
+    code, data = run("symbol_impact.py", "--root", repo, "--diff-json", str(l1),
+                     expect=0)
+    # integrated, impact-aware ordering is present with a transparent breakdown
+    assert "review_order" in data and "prioritized" in data
+    api = next(r for r in data["prioritized"] if r["path"] == "api.ts")
+    assert api["impact_score"] == 6
+    assert api["combined_score"] > api["l1_risk_score"]  # impact lifted it
+    assert any("used by 6" in reason for reason in api["reasons"])
+    # api.ts (6 callers) should outrank the quiet self-contained file
+    assert data["review_order"].index("api.ts") < data["review_order"].index("quiet.ts")
+
+
 def test_layer2_fallback_on_unsupported(tmp_path):
     repo = init_repo(tmp_path)
     write(repo, "notes.txt", "hello\n")

@@ -27,7 +27,14 @@ Output (stdout) JSON:
          "referenced_by":["x.ts",...],"blast_radius": N}
       ],
       "public_api_changes": ["add", "Foo", ...],
-      "impact_flags": ["exported_symbol_widely_used", ...]
+      "impact_flags": ["exported_symbol_widely_used", ...],
+      # present only when --diff-json was given: Layer 1's order re-ranked by
+      # folding in blast radius, with a transparent score breakdown + reasons.
+      "review_order": ["src/api.ts", ...],
+      "prioritized": [
+        {"path","combined_score","l1_risk_score","impact_score",
+         "public_api":[...],"reasons":[...]}
+      ]
     }
 
 Graceful fallback: if no supported source files are present, or none of the
@@ -52,6 +59,11 @@ WIDE_USE_THRESHOLD = 3
 # In --compact mode, cap each symbol's referenced_by list to this many entries;
 # blast_radius still carries the true total count.
 MAX_REFS_COMPACT = 5
+# Weights for folding Layer 2 impact into Layer 1's per-file risk_score.
+# Each external referrer of a changed public symbol adds REF_WEIGHT; any public
+# API change in a file adds PUBLIC_API_BONUS even with zero current callers.
+REF_WEIGHT = 5
+PUBLIC_API_BONUS = 10
 IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 SKIP_DIRS = {".git", "node_modules", "dist", "build", "out", "vendor", ".next",
              "__pycache__", ".venv", "venv"}
@@ -344,6 +356,51 @@ def iter_source_files(root, exts):
                 yield os.path.join(dirpath, fn)
 
 
+def integrate_priority(l1, symbols):
+    """Re-rank Layer 1 files by folding in Layer 2 blast radius.
+
+    Returns (review_order, prioritized). `prioritized` shows the score
+    breakdown and human reasons so the ranking is never a black box. Files Layer
+    2 never saw (non-code, deleted, unsupported) keep their Layer 1 score.
+    """
+    syms_by_file = {}
+    for s in symbols:
+        syms_by_file.setdefault(s["file"], []).append(s)
+
+    ranked = []
+    for f in l1.get("files", []):
+        path = f.get("path")
+        if not path:
+            continue
+        l1_score = f.get("risk_score", 0)
+        public = [s for s in syms_by_file.get(path, []) if s["exported"]]
+        impact = sum(s["blast_radius"] for s in public)
+        combined = l1_score + REF_WEIGHT * impact + (PUBLIC_API_BONUS if public else 0)
+
+        reasons = []
+        for flag in (f.get("risk_flags") or []):
+            reasons.append("L1: %s" % flag)
+        for s in sorted(public, key=lambda s: -s["blast_radius"]):
+            if s["blast_radius"] > 0:
+                reasons.append("public %s '%s' used by %d file(s)"
+                               % (s["kind"], s["name"], s["blast_radius"]))
+            else:
+                reasons.append("public %s '%s' changed (no external refs found)"
+                               % (s["kind"], s["name"]))
+
+        ranked.append({
+            "path": path,
+            "combined_score": combined,
+            "l1_risk_score": l1_score,
+            "impact_score": impact,
+            "public_api": [s["name"] for s in public],
+            "reasons": reasons,
+        })
+
+    ranked.sort(key=lambda r: (-r["combined_score"], r["path"]))
+    return [r["path"] for r in ranked], ranked
+
+
 def main():
     p = argparse.ArgumentParser(description="Layer 2 multi-language blast-radius analyser")
     p.add_argument("--root", default=".", help="repository root")
@@ -360,6 +417,7 @@ def main():
     root = os.path.abspath(args.root)
 
     changed = []
+    l1 = None
     if args.diff_json:
         try:
             with open(args.diff_json, "r", encoding="utf-8") as fh:
@@ -488,6 +546,14 @@ def main():
         "public_api_changes": public_api_changes,
         "impact_flags": impact_flags,
     }
+
+    # Fold blast radius back into Layer 1's ordering when we have the L1 map.
+    # This is the impact-aware review order — prefer it over Layer 1's.
+    if l1 is not None and l1.get("files"):
+        review_order, prioritized = integrate_priority(l1, symbols)
+        result["review_order"] = review_order
+        result["prioritized"] = prioritized
+
     if skipped:
         result["skipped_languages"] = skipped
     emit(result, args.compact)

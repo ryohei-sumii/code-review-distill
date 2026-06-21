@@ -103,9 +103,11 @@ def main():
     per_file = split_per_file(diff)
 
     groups = {}  # norm-hash -> {files, example_path, example_block}
+    no_content = []  # pure renames / mode changes — no +/- body, but still changed
     for path, block in per_file.items():
         if not block.strip():
-            continue  # pure rename / mode change, no content
+            no_content.append(path)  # keep visible so coverage stays complete
+            continue
         key = hashlib.sha1(normalize(block).encode("utf-8")).hexdigest()
         g = groups.setdefault(key, {"files": [], "example_path": path, "example_block": block})
         g["files"].append(path)
@@ -122,6 +124,7 @@ def main():
             })
         else:
             unique.extend(g["files"])
+    unique.extend(no_content)
     patterns.sort(key=lambda x: -x["count"])
     unique.sort()
 

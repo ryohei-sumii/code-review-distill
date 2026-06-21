@@ -204,11 +204,17 @@ def main():
     # (reasons x N — the bloat) is dropped here; `review_order` (paths only) and
     # the signal-bearing `high_impact` are kept.
     if files >= args.large_files:
-        out["large_scale"] = build_large_scale(cwd, scope, l1, l2, bool(args.range))
-        # patterns + unique enumerate every changed file losslessly, so the two
-        # O(N) verbose fields are redundant here and dropped to keep it bounded.
-        out.pop("prioritized", None)
-        out.pop("review_order", None)
+        # breaking detection needs a committed range; --staged has none. (When
+        # both flags are passed, scope is --staged, so guard on that too.)
+        has_range = bool(args.range) and not args.staged
+        ls = build_large_scale(cwd, scope, l1, l2, has_range)
+        out["large_scale"] = ls
+        # Drop the two O(N) verbose fields only if the compressed view actually
+        # covers the files; if compression yielded nothing, keep review_order so
+        # no file is hidden.
+        if ls.get("patterns") or ls.get("unique"):
+            out.pop("prioritized", None)
+            out.pop("review_order", None)
 
     if args.json:
         json.dump(out, sys.stdout, indent=2)

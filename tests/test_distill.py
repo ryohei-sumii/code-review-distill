@@ -573,6 +573,23 @@ def test_patterns_collapse_codemod(tmp_path):
     assert len(covered) == 21
 
 
+def test_patterns_cover_pure_renames(tmp_path):
+    # a pure rename has no +/- body; it must still be enumerated (coverage),
+    # not silently dropped (which, with review_order also dropped at scale, would
+    # make a changed file invisible).
+    repo = init_repo(tmp_path)
+    write(repo, "a.ts", "export const a = 1;\n")
+    commit_all(repo, "init")
+    git(repo, "mv", "a.ts", "b.ts")
+    commit_all(repo, "rename")
+    code, data = run("diff_patterns.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     "--json", expect=0)
+    covered = set(data["unique"])
+    for p in data["patterns"]:
+        covered |= set(p["files"])
+    assert "b.ts" in covered  # the renamed-to path is visible
+
+
 def test_patterns_do_not_overmerge_distinct_changes(tmp_path):
     repo = init_repo(tmp_path)
     for i in range(6):

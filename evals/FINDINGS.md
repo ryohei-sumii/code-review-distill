@@ -133,6 +133,34 @@ Honest reading:
   - *threshold border* — blast exactly at `--min-blast` (10) takes full with a
     small overhead; this is a knob, tune per repo.
 
+## 7. Large scale — the full map grows past the raw diff (a cap is needed)
+
+Pushing the benchmark to hundreds of files (estimated tokens):
+
+| files | raw diff | route full map | map / raw |
+|---|---|---|---|
+| 100 | 5,665 | 7,021 | 124% |
+| 300 | 17,315 | 21,071 | 122% |
+| 600 | 34,790 | 42,146 | 121% |
+
+The full map is **consistently larger than the raw diff** (~121–124%), at both
+low and high blast radius. It lists *every* changed file plus symbols and reasons
+in `review_order` / `prioritized`, so it grows linearly with N and overtakes the
+diff — it does **not** shrink context at scale.
+
+**Addressed (without dropping accuracy).** Rather than cap the file list (which
+would hide files — unacceptable), large changesets (`route.py`, `>= --large-files`)
+switch to *structured process*: lossless **pattern compression** (repeated/codemod
+hunks collapse to one example + the full member list), **deterministic checks**
+(violations only), and a **fan-out review plan** over the distinct units. Every
+changed file is still enumerated (in a pattern's members or as unique), so nothing
+is hidden; the verbose `review_order`/`prioritized` are dropped because patterns +
+unique already cover all files. Measured: a 600-file codemod went from ~121% of
+the raw diff to **~14%** (4.0k vs 27k tokens), and a genuinely diverse 40-file
+change is grouped by structural shape without over-merging. Non-repetitive large
+diffs don't compress (honest: there is nothing to collapse) but still get checks +
+fan-out.
+
 ## Reproducing
 
 ```bash

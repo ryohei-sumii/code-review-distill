@@ -61,6 +61,20 @@ the diff directly and let the brief supply the impact.
    `--max-brief-files` / `--max-brief-lines`. Use the manual steps below only
    when you want a specific layer or output.
 
+   **Large changesets (>= `--large-files`)** additionally get a `large_scale`
+   block — structured *process*, not just structured input:
+   - **pattern compression** — repeated/codemod hunks collapse to one example +
+     the member list (every file still covered; lossless). A 600-file codemod
+     becomes ~2 review units, ~14% of the raw diff.
+   - **deterministic `checks`** — `risk_flags`, `impact_flags`, breaking changes:
+     violations only, independent of changeset size.
+   - **`review_batches`** — a fan-out plan over the *distinct* units (one
+     representative per pattern + each unique file). **Review each batch in its
+     own fresh context / sub-agent**, then aggregate — bounded context per step,
+     no lost-in-the-middle, and every file is covered. The verbose per-file
+     `review_order`/`prioritized` are dropped here (patterns + unique enumerate
+     all files), so the map stays smaller than the raw diff at scale.
+
 1. **Decide the range.**
    - Branch vs. base: `--range main..HEAD` (substitute the real base).
    - Uncommitted work: `--staged`, or no range for the working tree.

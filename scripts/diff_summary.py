@@ -395,7 +395,7 @@ def main():
     for f in files:
         f["risk_score"] = file_risk_score(f)
 
-    ordered = sorted(files, key=file_risk_score, reverse=True)
+    ordered = sorted(files, key=lambda f: f["risk_score"], reverse=True)
 
     result = {
         "source": source,

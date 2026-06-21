@@ -1,0 +1,26 @@
+{
+  "description": "Eval set for tuning the code-review-distill SKILL.md description trigger. Each case is a user prompt with a label: should_fire (the skill should activate) or not. Extend with real prompts you observe.",
+  "cases": [
+    {"prompt": "Review this branch against main", "label": "should_fire"},
+    {"prompt": "Can you review the diff before I open a PR?", "label": "should_fire"},
+    {"prompt": "Do a code review of these changes", "label": "should_fire"},
+    {"prompt": "What's the blast radius of this change?", "label": "should_fire"},
+    {"prompt": "Which callers are affected if I change this exported function?", "label": "should_fire"},
+    {"prompt": "Review the pull request", "label": "should_fire"},
+    {"prompt": "Look over my staged changes for bugs", "label": "should_fire"},
+    {"prompt": "Summarize what changed in this feature branch and flag risky parts", "label": "should_fire"},
+    {"prompt": "Are there any issues in the diff between develop and HEAD?", "label": "should_fire"},
+    {"prompt": "Audit the modified files in this PR for problems", "label": "should_fire"},
+
+    {"prompt": "Write a function that reverses a linked list", "label": "should_not_fire"},
+    {"prompt": "Explain how async/await works in JavaScript", "label": "should_not_fire"},
+    {"prompt": "Set up a new Express server with a health endpoint", "label": "should_not_fire"},
+    {"prompt": "Fix the failing unit test in cart.test.ts", "label": "should_not_fire"},
+    {"prompt": "What's the capital of France?", "label": "should_not_fire"},
+    {"prompt": "Rename the variable foo to bar everywhere", "label": "should_not_fire"},
+    {"prompt": "Add a dark mode toggle to the settings page", "label": "should_not_fire"},
+    {"prompt": "Install the dependencies and run the build", "label": "should_not_fire"},
+    {"prompt": "Generate a SQL migration for a new users table", "label": "should_not_fire"},
+    {"prompt": "Draft release notes for version 2.0", "label": "should_not_fire"}
+  ]
+}

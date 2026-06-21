@@ -42,17 +42,19 @@ the middle of a long transcript.
    `code_changed_without_tests`, `file_deleted`, `large_hunk`,
    `large_file_change`, `generated_file`.
 
-3. **Run Layer 2 (TypeScript/JavaScript) if relevant.** If any changed file is
-   `.ts/.tsx/.js/.jsx`, get the blast radius:
+3. **Run Layer 2 (symbol impact) if relevant.** If any changed file is a
+   supported source file (`.ts/.tsx/.js/.jsx`, `.py`, `.go`), get the blast
+   radius:
    ```bash
-   python scripts/ts_impact.py --root <repo> --diff-json /tmp/l1.json > /tmp/l2.json
+   python scripts/symbol_impact.py --root <repo> --diff-json /tmp/l1.json > /tmp/l2.json
    ```
    - Exit `0`: read `public_api_changes`, `impact_flags`, and per-symbol
-     `blast_radius` / `referenced_by`. A changed exported symbol with a wide
-     blast radius is a top priority.
-   - Exit `3`: expected fallback (no TS/JS, or grammar not installed). Continue
-     with Layer 1 only — do **not** treat this as an error. To enable Layer 2:
-     `pip install tree-sitter tree-sitter-typescript --break-system-packages`.
+     `blast_radius` / `referenced_by`. A changed public symbol with a wide
+     blast radius is a top priority. "Public" means: exported (TS/JS),
+     non-underscore module-level (Python), or capitalised (Go).
+   - Exit `3`: expected fallback (no supported files, or grammar not installed).
+     Continue with Layer 1 only — do **not** treat this as an error. To enable:
+     `pip install tree-sitter tree-sitter-typescript tree-sitter-python tree-sitter-go --break-system-packages`.
 
 4. **Prioritise.** Walk `review_order` (highest risk first). Spend attention on
    high-risk files and high-blast-radius public API changes; skim generated and
@@ -76,16 +78,35 @@ the middle of a long transcript.
    concrete suggested fix. Note explicitly when the map let you skip large
    low-risk regions.
 
+## Companion distillers (same two-layer + fallback philosophy)
+
+Reach for these when the task is adjacent to a plain review:
+
+- **Refactor verification** — `scripts/refactor_check.py --range base..head
+  --cwd <repo>`. Compares symbols at both revisions and flags when a "pure
+  refactor" silently changed the public API
+  (`public_api_changed_during_refactor`). Use when the user calls something a
+  refactor and you need to confirm behaviour/API was preserved.
+- **Process flow** — `scripts/flow_map.py --dir <src>` emits a Mermaid
+  `flowchart` of the internal call graph; `--sequence ENTRY` traces a
+  `sequenceDiagram` from one function; `--json` gives the raw graph. Use when
+  asked "how does this flow" / "what calls what".
+- **Trigger tuning** — `scripts/run_loop.py` scores this `description` against
+  `evals/trigger_evalset.json` (precision/recall/trigger-rate, plus words to
+  add or reconsider). Use when iterating the skill's own activation accuracy.
+
 ## Output reference
 
 - `diff_summary.py` → `{ source, totals, files[], risk_flags[], review_order[] }`.
   Each file: `path, old_path?, status, language, additions, deletions, is_test,
   is_generated, is_binary, hunks[], risk_flags[]`.
-- `ts_impact.py` → `{ ok, analyzed_files[], symbols[], public_api_changes[],
-  impact_flags[] }`, or `{ ok:false, note }` with exit 3 on graceful fallback.
+- `symbol_impact.py` → `{ ok, languages[], analyzed_files[], symbols[],
+  public_api_changes[], impact_flags[] }`, or `{ ok:false, note }` with exit 3
+  on graceful fallback. Supports typescript / javascript / python / go.
 
 ## Extending
 
-Layer 1 is already language-agnostic. To add a language to Layer 2, add its
-tree-sitter grammar, a per-language `extract_symbols` walk, and an
-extension→parser mapping in `ts_impact.py`; Layer 1 needs no changes.
+Layer 1 is already language-agnostic. To add a language to Layer 2, add a
+registry entry in `symbol_impact.py` (`LANGS`: extensions + tree-sitter loader)
+and a per-language `extract_*` walk; Layer 1 needs no changes. `flow_map.py`
+takes a parallel `FLOW` entry (function/call node types).

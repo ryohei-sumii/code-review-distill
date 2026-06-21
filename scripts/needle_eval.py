@@ -94,23 +94,27 @@ def benign_change(i):
 
 
 def needle_change(i, kind):
-    """A buggy edit. `kind` controls whether the map can surface it."""
+    """A buggy edit. `kind` controls whether the map can surface it.
+
+    The bug carries NO explanatory comment — only a bare `//NEEDLE` marker used
+    to locate it for geometry, which --emit-cases strips entirely so the judge
+    sees a clean subtle bug with no hint.
+    """
     if kind == "structural":
-        # changes the public signature (Layer 2 sees public_api change) AND a bug
+        # adds a public param (Layer 2 sees a public_api change) AND an
+        # off-by-one: the loop should run k <= b (it runs k < b).
         return (
             "export function fn%d(a: number, b: number, c: number): number {\n"
-            "  // %s: off-by-one — should be k <= b\n"
             "  let acc = 0;\n"
             "  for (let k = 0; k < b; k++) { acc += a + k + c; }\n"
-            "  return acc;\n"
+            "  return acc;  //%s\n"
             "}\n" % (i, NEEDLE_MARK)
         )
-    # "quiet": same shape as a benign edit, subtle off-by-one, no structural signal
+    # "quiet": same shape as a benign edit; the array length should be b + 1.
     return (
         "export function fn%d(a: number, b: number): number {\n"
-        "  // %s: off-by-one — length should be b + 1\n"
         "  const xs = Array.from({length: b}, (_, k) => a + k);\n"
-        "  return xs.reduce((p, q) => p + q, 0);\n"
+        "  return xs.reduce((p, q) => p + q, 0);  //%s\n"
         "}\n" % (i, NEEDLE_MARK)
     )
 
@@ -176,12 +180,19 @@ def build_scenario(n_files, position, kind, workdir):
     per_file = split_per_file(raw)
     needle_hunk = per_file.get(needle_path, "")
 
-    # does the map rank the needle file first? (structural needles should)
+    # The impact-aware order the reviewer would actually follow: prefer Layer 2's
+    # integrated review_order, falling back to Layer 1's.
+    review_order = []
     try:
-        review_order = json.loads(l1).get("review_order", [])
-        rank = review_order.index(needle_path) if needle_path in review_order else -1
+        review_order = json.loads(l2).get("review_order") or []
     except ValueError:
-        rank = -1
+        pass
+    if not review_order:
+        try:
+            review_order = json.loads(l1).get("review_order", [])
+        except ValueError:
+            review_order = []
+    rank = review_order.index(needle_path) if needle_path in review_order else -1
 
     return {
         "raw": raw,
@@ -189,6 +200,8 @@ def build_scenario(n_files, position, kind, workdir):
         "needle_hunk": needle_hunk,
         "needle_path": needle_path,
         "needle_rank_in_map": rank,
+        "review_order": review_order,
+        "per_file": per_file,
         "n_files": n_files,
     }
 
@@ -263,15 +276,29 @@ def run_eval(n_files, repeats, kind):
     return {"kind": kind, "n_files": n_files, "repeats": repeats, "by_position": agg}
 
 
-def emit_cases(out_dir, n_files, kind):
+def emit_cases(out_dir, n_files, kind, topk=6):
+    """Write blind judge inputs for both conditions.
+
+    A_raw      = the whole diff (needle buried at its position).
+    B_distill  = the compact map + the hunks for the top-K files in the map's
+                 review_order — i.e. what a reviewer following the map actually
+                 reads. If the map does not rank the needle file into the top K,
+                 B does NOT contain it, and the judge cannot detect it. This is
+                 the honest end-to-end test (no optimistic "needle always shown").
+    """
     os.makedirs(out_dir, exist_ok=True)
     manifest = []
+    strip = lambda t: re.sub(r"\s*//\s*%s\b" % NEEDLE_MARK, "", t)
     for position in POSITIONS:
         with tempfile.TemporaryDirectory() as wd:
             sc = build_scenario(n_files, position, kind, wd)
             base = "%s_%s" % (kind, position)
-            raw_clean = sc["raw"].replace(NEEDLE_MARK + ": ", "")  # hide the marker from the judge
-            distill_clean = (sc["map_text"] + "\n" + sc["needle_hunk"]).replace(NEEDLE_MARK + ": ", "")
+            top_paths = sc["review_order"][:topk]
+            top_hunks = "\n".join(sc["per_file"].get(p, "") for p in top_paths)
+            needle_in_topk = sc["needle_path"] in top_paths
+
+            raw_clean = strip(sc["raw"])
+            distill_clean = strip(sc["map_text"] + "\n\n# top hunks:\n" + top_hunks)
             with open(os.path.join(out_dir, base + ".A_raw.txt"), "w") as fh:
                 fh.write(raw_clean)
             with open(os.path.join(out_dir, base + ".B_distill.txt"), "w") as fh:
@@ -279,6 +306,8 @@ def emit_cases(out_dir, n_files, kind):
             manifest.append({
                 "id": base, "position": position, "kind": kind,
                 "needle_path": sc["needle_path"],
+                "needle_rank_in_map": sc["needle_rank_in_map"],
+                "needle_in_topk": needle_in_topk, "topk": topk,
                 "answer": "off-by-one bug in %s" % sc["needle_path"],
             })
     with open(os.path.join(out_dir, "manifest.json"), "w") as fh:

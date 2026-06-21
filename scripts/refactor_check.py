@@ -115,6 +115,8 @@ def main():
     p.add_argument("--base", help="base revision (alternative to --range)")
     p.add_argument("--head", default="HEAD", help="head revision")
     p.add_argument("--cwd", default=".", help="repository working directory")
+    p.add_argument("--compact", action="store_true",
+                   help="emit minified JSON with empty fields dropped")
     args = p.parse_args()
 
     if args.range:
@@ -211,8 +213,7 @@ def main():
     }
     if skipped:
         result["skipped_languages"] = skipped
-    json.dump(result, sys.stdout, indent=2)
-    sys.stdout.write("\n")
+    si.emit(result, args.compact)
 
 
 if __name__ == "__main__":

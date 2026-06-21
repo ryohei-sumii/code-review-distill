@@ -42,6 +42,10 @@ the middle of a long transcript.
    `code_changed_without_tests`, `file_deleted`, `large_hunk`,
    `large_file_change`, `generated_file`.
 
+   For big changesets add `--compact` (minified JSON, empty fields dropped —
+   ~40-60% smaller) to keep the map cheap. Every script that emits JSON accepts
+   it.
+
 3. **Run Layer 2 (symbol impact) if relevant.** If any changed file is a
    supported source file (`.ts/.tsx/.js/.jsx`, `.py`, `.go`), get the blast
    radius:

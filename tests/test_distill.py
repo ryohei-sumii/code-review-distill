@@ -181,6 +181,44 @@ def test_layer2_go_exported_by_case(tmp_path):
     assert by_name["helper"]["exported"] is False
 
 
+def test_layer1_compact_is_smaller_and_valid(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "a.py", "x = 1\n")
+    write(repo, "b.py", "y = 2\n")
+    commit_all(repo, "init")
+    write(repo, "a.py", "x = 3\n")
+    write(repo, "b.py", "y = 4\n")
+    commit_all(repo, "change")
+
+    _, verbose = run("diff_summary.py", "--range", "HEAD~1..HEAD", "--cwd", repo,
+                     expect=0)
+    code, compact = run("diff_summary.py", "--range", "HEAD~1..HEAD", "--cwd",
+                        repo, "--compact", expect=0)
+    # same core data, just no empty fields / whitespace
+    assert compact["totals"] == verbose["totals"]
+    assert set(compact["review_order"]) == set(verbose["review_order"])
+    # empty fields are dropped in compact mode
+    for f in compact["files"]:
+        assert f.get("risk_flags", ["x"]) != []
+
+
+@needs_ts
+def test_layer2_compact_caps_referenced_by(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo, "core.ts", "export function p(a){return a;}\n")
+    for i in range(10):
+        write(repo, "c%d.ts" % i,
+              'import {p} from "./core"; export const v%d = p(%d);\n' % (i, i))
+    commit_all(repo, "init")
+
+    code, data = run("symbol_impact.py", "--root", repo, "--files", "core.ts",
+                     "--compact", expect=0)
+    p = next(s for s in data["symbols"] if s["name"] == "p")
+    # full count preserved, list trimmed
+    assert p["blast_radius"] == 10
+    assert len(p["referenced_by"]) <= 5
+
+
 def test_layer2_fallback_on_unsupported(tmp_path):
     repo = init_repo(tmp_path)
     write(repo, "notes.txt", "hello\n")

@@ -78,6 +78,11 @@ python scripts/diff_summary.py --file some.diff
 python scripts/symbol_impact.py --root <repo> --diff-json /tmp/l1.json
 python scripts/symbol_impact.py --root <repo> --files a.ts b.py c.go
 
+# Any JSON-emitting script accepts --compact (minified, empty fields dropped,
+# referenced_by capped) for ~40-60% smaller maps on large changesets:
+python scripts/diff_summary.py --range main..HEAD --cwd <repo> --compact
+python scripts/symbol_impact.py --root <repo> --diff-json /tmp/l1.json --compact
+
 # Companion: verify a "refactor" didn't change the public API
 python scripts/refactor_check.py --range main..HEAD --cwd <repo>
 

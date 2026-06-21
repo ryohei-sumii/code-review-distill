@@ -226,6 +226,8 @@ def main():
     p.add_argument("--root", default=".", help="base for relative paths")
     p.add_argument("--sequence", metavar="ENTRY", help="emit a sequenceDiagram from ENTRY")
     p.add_argument("--json", action="store_true", help="emit raw graph JSON")
+    p.add_argument("--compact", action="store_true",
+                   help="with --json, emit minified JSON with empty fields dropped")
     args = p.parse_args()
 
     if not args.files and not args.dir:
@@ -274,8 +276,7 @@ def main():
         out["ok"] = True
         if skipped:
             out["skipped_languages"] = skipped
-        json.dump(out, sys.stdout, indent=2)
-        sys.stdout.write("\n")
+        si.emit(out, args.compact)
     elif args.sequence:
         sys.stdout.write(to_sequence(graph, args.sequence) + "\n")
     else:

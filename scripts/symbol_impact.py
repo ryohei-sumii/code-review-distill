@@ -49,9 +49,39 @@ import re
 import sys
 
 WIDE_USE_THRESHOLD = 3
+# In --compact mode, cap each symbol's referenced_by list to this many entries;
+# blast_radius still carries the true total count.
+MAX_REFS_COMPACT = 5
 IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 SKIP_DIRS = {".git", "node_modules", "dist", "build", "out", "vendor", ".next",
              "__pycache__", ".venv", "venv"}
+
+
+def strip_empty(obj):
+    """Recursively drop None / empty-list / empty-string values (compact mode).
+
+    Booleans and numbers (incl. 0) are kept. Shared by the companion scripts.
+    """
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            v = strip_empty(v)
+            if v is None or v == [] or v == "":
+                continue
+            out[k] = v
+        return out
+    if isinstance(obj, list):
+        return [strip_empty(v) for v in obj]
+    return obj
+
+
+def emit(result, compact):
+    """Write JSON to stdout: minified+stripped when compact, else indent=2."""
+    if compact:
+        json.dump(strip_empty(result), sys.stdout, separators=(",", ":"))
+    else:
+        json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
 
 
 def fallback(note, exit_code=3, **extra):
@@ -319,6 +349,9 @@ def main():
     p.add_argument("--root", default=".", help="repository root")
     p.add_argument("--diff-json", help="Layer 1 JSON output (to read changed files)")
     p.add_argument("--files", nargs="*", help="explicit list of changed files")
+    p.add_argument("--compact", action="store_true",
+                   help="minified JSON, empty fields dropped, referenced_by capped "
+                        "(blast_radius keeps the full count) — ~half the size")
     args = p.parse_args()
 
     root = os.path.abspath(args.root)
@@ -436,6 +469,12 @@ def main():
     if public_api_changes:
         impact_flags.append("public_api_changed")
 
+    if args.compact:
+        # Keep the true count in blast_radius; trim the (potentially huge) list.
+        for sym in symbols:
+            if len(sym["referenced_by"]) > MAX_REFS_COMPACT:
+                sym["referenced_by"] = sym["referenced_by"][:MAX_REFS_COMPACT]
+
     result = {
         "ok": True,
         "languages": sorted(used_langs),
@@ -446,8 +485,7 @@ def main():
     }
     if skipped:
         result["skipped_languages"] = skipped
-    json.dump(result, sys.stdout, indent=2)
-    sys.stdout.write("\n")
+    emit(result, args.compact)
 
 
 if __name__ == "__main__":

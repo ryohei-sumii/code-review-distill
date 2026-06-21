@@ -344,12 +344,41 @@ def run_git_diff(args):
     return out.stdout
 
 
+def strip_empty(obj):
+    """Recursively drop None / empty-list / empty-string values to shrink output.
+
+    Booleans and numbers (incl. 0) are kept — they carry meaning. Used only in
+    --compact mode; the default verbose output keeps every field.
+    """
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            v = strip_empty(v)
+            if v is None or v == [] or v == "":
+                continue
+            out[k] = v
+        return out
+    if isinstance(obj, list):
+        return [strip_empty(v) for v in obj]
+    return obj
+
+
+def emit(result, compact):
+    if compact:
+        json.dump(strip_empty(result), sys.stdout, separators=(",", ":"))
+    else:
+        json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
 def main():
     p = argparse.ArgumentParser(description="Layer 1 language-agnostic diff distiller")
     p.add_argument("--range", help="git revision range, e.g. main..HEAD")
     p.add_argument("--staged", action="store_true", help="diff the staged index")
     p.add_argument("--file", help="read a unified diff from this file instead of git")
     p.add_argument("--cwd", default=".", help="repository working directory")
+    p.add_argument("--compact", action="store_true",
+                   help="emit minified JSON with empty fields dropped (~half the size)")
     args = p.parse_args()
 
     if args.file:
@@ -379,8 +408,7 @@ def main():
     if source == "range" and args.range:
         result["range"] = args.range
 
-    json.dump(result, sys.stdout, indent=2)
-    sys.stdout.write("\n")
+    emit(result, args.compact)
 
 
 if __name__ == "__main__":

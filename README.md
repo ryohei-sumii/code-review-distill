@@ -59,8 +59,10 @@ main"*, *"what's the blast radius of these changes"*.
   mechanical risk flags, then emits a risk-ordered `review_order`. Works for any
   language with just Python + git.
 - **Layer 2 — `symbol_impact.py` (TS/JS/Python/Go).** Uses tree-sitter to find
-  changed symbols, flag the public API, and estimate blast radius (how many
-  other files reference each public symbol).
+  changed symbols (with signatures), flag the public API, and estimate blast
+  radius — **import-resolved**: how many other files actually import each public
+  symbol from its defining file. Same-name locals and cross-module collisions
+  are excluded, not merely identifier matches.
 
 Both **fall back gracefully**: Layer 2 exits `3` with a JSON note when no
 supported file is present or a grammar is missing, so the review continues on
@@ -111,7 +113,8 @@ python scripts/needle_eval.py --predictions preds.json --manifest /tmp/cases/man
 | Script | Output |
 |---|---|
 | `diff_summary.py` | `{ source, totals, files[], risk_flags[], review_order[] }`; each file has `path, status, language, additions, deletions, risk_score, is_test, is_generated, hunks[], risk_flags[]` |
-| `symbol_impact.py` | `{ ok, languages[], analyzed_files[], symbols[], public_api_changes[], impact_flags[] }`, or `{ ok:false, note }` (exit 3). With `--diff-json`, also emits an **impact-aware** `review_order[]` + `prioritized[]` (Layer 1 order re-ranked by blast radius, with score breakdown and `reasons`) |
+| `symbol_impact.py` | `{ ok, languages[], analyzed_files[], symbols[], public_api_changes[], impact_flags[] }`, or `{ ok:false, note }` (exit 3). Each symbol carries its `signature`; `blast_radius` is import-resolved. With `--diff-json`, also emits an **impact-aware** `review_order[]` + `prioritized[]` (Layer 1 order re-ranked by blast radius, with score breakdown and `reasons`) |
+| `refactor_check.py` | `{ ok, base, head, files[], invariants{public_api_preserved, signatures_preserved, …}, flags[] }`; flags `public_signature_changed` when a kept symbol's signature changes (breaking) |
 | `refactor_check.py` | `{ ok, base, head, files[], invariants{public_api_preserved, …}, flags[] }` |
 | `flow_map.py` | Mermaid text, or `{ nodes[], edges[], external_calls{} }` with `--json` |
 | `run_loop.py` | `{ mode, metrics{precision,recall,f1,trigger_rate,…}, suggestions{} }` |

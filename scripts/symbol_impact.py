@@ -4,13 +4,14 @@
 Given the changed source files (from Layer 1 output or an explicit list), this:
 
   1. Extracts the symbols defined in each file (function / class / method /
-     exported variable / type / interface), per language.
+     exported variable / type / interface) plus their signature, per language.
   2. Flags which of those are part of the public API.
        - TS/JS:  `export`-ed symbols.
        - Python: module-level names not prefixed with `_`.
        - Go:     identifiers starting with an upper-case letter.
-  3. Estimates blast radius: how many *other* files of the same language
-     reference each public symbol (identifier match across the repo).
+  3. Estimates blast radius: how many *other* files import each public symbol
+     from the file that defines it. This is import-resolved (not bare identifier
+     matching), so same-name locals and cross-module collisions are excluded.
 
 Supported languages: typescript, javascript, python, go.
 Adding another is a small registry entry (see LANGS below) plus a per-language
@@ -23,7 +24,7 @@ Output (stdout) JSON:
       "languages": ["typescript", "python"],
       "analyzed_files": ["a.ts", ...],
       "symbols": [
-        {"file","language","name","kind","exported",
+        {"file","language","name","kind","exported","signature",
          "referenced_by":["x.ts",...],"blast_radius": N}
       ],
       "public_api_changes": ["add", "Foo", ...],
@@ -64,7 +65,6 @@ MAX_REFS_COMPACT = 5
 # API change in a file adds PUBLIC_API_BONUS even with zero current callers.
 REF_WEIGHT = 5
 PUBLIC_API_BONUS = 10
-IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 SKIP_DIRS = {".git", "node_modules", "dist", "build", "out", "vendor", ".next",
              "__pycache__", ".venv", "venv"}
 
@@ -112,9 +112,29 @@ def field(node, name):
     return node.child_by_field_name(name)
 
 
+def _norm(s):
+    """Collapse whitespace so signatures compare stably across formatting."""
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def func_signature(src, node, ret_fields=("return_type",)):
+    """Normalized "(params) -> ret" signature for a callable node, or ""."""
+    params = field(node, "parameters")
+    if params is None:
+        return ""
+    sig = _norm(node_text(src, params))
+    for rf in ret_fields:
+        r = field(node, rf)
+        if r is not None:
+            sig += " " + _norm(node_text(src, r))
+            break
+    return sig
+
+
 # --- Per-language symbol extraction ---------------------------------------
 # Each extractor takes (src: bytes, root_node) and returns a list of
-# (kind: str, name: str, exported: bool) tuples.
+# (kind: str, name: str, exported: bool, signature: str) tuples. signature is
+# "" for non-callable kinds (class / type / const / ...).
 
 def extract_ts(src, root):
     symbols = []
@@ -131,18 +151,19 @@ def extract_ts(src, root):
             if m.type in ("method_definition", "method_signature"):
                 nm = field(m, "name")
                 if nm is not None:
-                    symbols.append(("method", "%s.%s" % (class_name, node_text(src, nm)), False))
+                    symbols.append(("method", "%s.%s" % (class_name, node_text(src, nm)),
+                                    False, func_signature(src, m)))
 
     def visit(node, exported):
         t = node.type
         if t == "function_declaration":
             nm = name_of(node)
             if nm:
-                symbols.append(("function", nm, exported))
+                symbols.append(("function", nm, exported, func_signature(src, node)))
         elif t in ("class_declaration", "abstract_class_declaration"):
             nm = name_of(node)
             if nm:
-                symbols.append(("class", nm, exported))
+                symbols.append(("class", nm, exported, ""))
                 methods(node, nm)
         elif t in ("lexical_declaration", "variable_declaration"):
             for decl in node.named_children:
@@ -151,18 +172,20 @@ def extract_ts(src, root):
                     if nm_node is not None and nm_node.type == "identifier":
                         val = field(decl, "value")
                         kind = "const"
+                        sig = ""
                         if val is not None and val.type in (
                             "arrow_function", "function_expression", "function"
                         ):
                             kind = "function"
-                        symbols.append((kind, node_text(src, nm_node), exported))
+                            sig = func_signature(src, val)
+                        symbols.append((kind, node_text(src, nm_node), exported, sig))
         elif t in ("interface_declaration", "type_alias_declaration", "enum_declaration"):
             nm = name_of(node)
             if nm:
                 kind = {"interface_declaration": "interface",
                         "type_alias_declaration": "type",
                         "enum_declaration": "enum"}[t]
-                symbols.append((kind, nm, exported))
+                symbols.append((kind, nm, exported, ""))
 
     for child in root.named_children:
         if child.type == "export_statement":
@@ -176,7 +199,7 @@ def extract_ts(src, root):
                             if spec.type == "export_specifier":
                                 nm = field(spec, "name")
                                 if nm is not None:
-                                    symbols.append(("reexport", node_text(src, nm), True))
+                                    symbols.append(("reexport", node_text(src, nm), True, ""))
         else:
             visit(child, False)
     return symbols
@@ -197,7 +220,8 @@ def extract_python(src, root):
                 nm = field(m, "name")
                 if nm is not None:
                     mname = node_text(src, nm)
-                    symbols.append(("method", "%s.%s" % (class_name, mname), False))
+                    symbols.append(("method", "%s.%s" % (class_name, mname),
+                                    False, func_signature(src, m)))
 
     for child in root.named_children:
         t = child.type
@@ -205,22 +229,24 @@ def extract_python(src, root):
             nm = field(child, "name")
             if nm is not None:
                 name = node_text(src, nm)
-                symbols.append(("function", name, is_public(name)))
+                symbols.append(("function", name, is_public(name), func_signature(src, child)))
         elif t == "decorated_definition":
             inner = field(child, "definition") or child.named_children[-1]
             if inner is not None and inner.type in ("function_definition", "class_definition"):
                 nm = field(inner, "name")
                 if nm is not None:
                     name = node_text(src, nm)
-                    kind = "function" if inner.type == "function_definition" else "class"
-                    symbols.append((kind, name, is_public(name)))
-                    if inner.type == "class_definition":
+                    if inner.type == "function_definition":
+                        symbols.append(("function", name, is_public(name),
+                                        func_signature(src, inner)))
+                    else:
+                        symbols.append(("class", name, is_public(name), ""))
                         methods(inner, name)
         elif t == "class_definition":
             nm = field(child, "name")
             if nm is not None:
                 name = node_text(src, nm)
-                symbols.append(("class", name, is_public(name)))
+                symbols.append(("class", name, is_public(name), ""))
                 methods(child, name)
         elif t in ("expression_statement",):
             # module-level assignment: NAME = ...
@@ -229,7 +255,7 @@ def extract_python(src, root):
                     left = field(c, "left")
                     if left is not None and left.type == "identifier":
                         name = node_text(src, left)
-                        symbols.append(("const", name, is_public(name)))
+                        symbols.append(("const", name, is_public(name), ""))
     return symbols
 
 
@@ -245,7 +271,8 @@ def extract_go(src, root):
             nm = field(child, "name")
             if nm is not None:
                 name = node_text(src, nm)
-                symbols.append(("function", name, is_exported(name)))
+                symbols.append(("function", name, is_exported(name),
+                                func_signature(src, child, ret_fields=("result",))))
         elif t == "method_declaration":
             nm = field(child, "name")
             if nm is not None:
@@ -257,14 +284,15 @@ def extract_go(src, root):
                     rt = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", node_text(src, recv))
                     if rt:
                         recv_name = rt[-1] + "."
-                symbols.append(("method", recv_name + name, is_exported(name)))
+                symbols.append(("method", recv_name + name, is_exported(name),
+                                func_signature(src, child, ret_fields=("result",))))
         elif t == "type_declaration":
             for spec in child.named_children:
                 if spec.type == "type_spec":
                     nm = field(spec, "name")
                     if nm is not None:
                         name = node_text(src, nm)
-                        symbols.append(("type", name, is_exported(name)))
+                        symbols.append(("type", name, is_exported(name), ""))
         elif t in ("var_declaration", "const_declaration"):
             for spec in child.named_children:
                 if spec.type in ("var_spec", "const_spec"):
@@ -272,7 +300,7 @@ def extract_go(src, root):
                     if nm is not None:
                         name = node_text(src, nm)
                         kind = "var" if t == "var_declaration" else "const"
-                        symbols.append((kind, name, is_exported(name)))
+                        symbols.append((kind, name, is_exported(name), ""))
     return symbols
 
 
@@ -354,6 +382,175 @@ def iter_source_files(root, exts):
         for fn in filenames:
             if ext_of(fn) in exts:
                 yield os.path.join(dirpath, fn)
+
+
+# --- Import-aware reference resolution -------------------------------------
+# Blast radius counts files that actually *import* a changed symbol from the
+# file that defines it — not files that merely mention the identifier. This is a
+# precision upgrade over bare identifier matching: it drops same-name locals and
+# cross-module false positives. Resolution is best-effort and regex-based;
+# dynamic imports, default-export aliasing, and deep re-export chains are out of
+# scope (precision-biased: such cases are missed rather than over-counted).
+
+TS_RESOLVE_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
+# bindings span at most one brace group and never cross a `{`, `}` or `;`, so a
+# semicolon-less `export { x }` can't be glued onto a following import's module.
+_TS_FROM_RE = re.compile(
+    r'\b(?:import|export)\b(?P<bindings>[^;{}]*(?:\{[^}]*\})?[^;{}]*?)\bfrom\s*'
+    r'["\'](?P<mod>[^"\']+)["\']')
+_TS_REQUIRE_RE = re.compile(r'\brequire\(\s*["\'](?P<mod>[^"\']+)["\']\s*\)')
+_PY_FROM_RE = re.compile(
+    r'^[ \t]*from[ \t]+(?P<dots>\.*)(?P<mod>[\w.]*)[ \t]+import[ \t]+(?P<names>.+)$', re.M)
+_PY_IMPORT_RE = re.compile(r'^[ \t]*import[ \t]+(?P<body>[\w. ,]+?(?:[ \t]+as[ \t]+\w+)?)[ \t]*$', re.M)
+_GO_BLOCK_RE = re.compile(r'\bimport\s*\(\s*(?P<body>[\s\S]*?)\s*\)')
+_GO_SINGLE_RE = re.compile(r'\bimport\s+(?P<entry>(?:[A-Za-z_.]\w*\s+)?"[^"]+")')
+_GO_ENTRY_RE = re.compile(r'(?:(?P<alias>[A-Za-z_.]\w*)\s+)?"(?P<path>[^"]+)"')
+
+
+def _uses_qualified(text, ns, sym):
+    return re.search(r'(?<![\w.])%s\s*\.\s*%s\b' % (re.escape(ns), re.escape(sym)),
+                     text) is not None
+
+
+def _ts_bindings(binding_text):
+    """(named:set, namespaces:set, star:bool) from an import binding clause."""
+    named, namespaces = set(), set()
+    star = False
+    for m in re.finditer(r'\*\s+as\s+([A-Za-z_$][\w$]*)', binding_text):
+        namespaces.add(m.group(1))
+    brace = re.search(r'\{([^}]*)\}', binding_text)
+    if brace:
+        for part in brace.group(1).split(','):
+            part = part.strip()
+            if not part:
+                continue
+            name = re.sub(r'^type\s+', '', part.split(' as ')[0].strip())
+            if name:
+                named.add(name)
+    elif not namespaces and re.search(r'(^|[\s,])\*(\s|$)', binding_text):
+        star = True  # export * from "mod"
+    return named, namespaces, star
+
+
+def parse_imports(text, lang):
+    """Return import records for a candidate file, by language family."""
+    records = []
+    if lang in ("typescript", "tsx", "javascript"):
+        for m in _TS_FROM_RE.finditer(text):
+            named, ns, star = _ts_bindings(m.group("bindings"))
+            records.append({"module": m.group("mod"), "named": named,
+                            "namespaces": ns, "star": star, "kind": "ts"})
+        for m in _TS_REQUIRE_RE.finditer(text):
+            records.append({"module": m.group("mod"), "named": set(),
+                            "namespaces": set(), "star": True, "kind": "ts"})
+    elif lang == "python":
+        for m in _PY_FROM_RE.finditer(text):
+            names_part = m.group("names").strip().strip("()")
+            star = "*" in names_part
+            named = set()
+            for part in names_part.split(","):
+                nm = part.strip().split(" as ")[0].strip()
+                if nm and nm != "*":
+                    named.add(nm)
+            records.append({"dots": m.group("dots"), "module": m.group("mod"),
+                            "named": named, "star": star, "kind": "py_from"})
+        for m in _PY_IMPORT_RE.finditer(text):
+            for entry in m.group("body").split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                parts = entry.split(" as ")
+                mod = parts[0].strip()
+                alias = parts[1].strip() if len(parts) > 1 else mod
+                records.append({"dots": "", "module": mod, "alias": alias,
+                                "kind": "py_import"})
+    elif lang == "go":
+        entries = []
+        for blk in _GO_BLOCK_RE.finditer(text):
+            entries.extend(_GO_ENTRY_RE.finditer(blk.group("body")))
+        for s in _GO_SINGLE_RE.finditer(text):
+            em = _GO_ENTRY_RE.search(s.group("entry"))
+            if em:
+                entries.append(em)
+        for m in entries:
+            path = m.group("path")
+            alias = m.group("alias") or path.rstrip("/").split("/")[-1]
+            records.append({"module": path, "alias": alias, "kind": "go"})
+    return records
+
+
+def resolve_ts_module(spec, importer_abs):
+    if not (spec.startswith("./") or spec.startswith("../") or spec == "."):
+        return None  # bare/external specifier — not a local file
+    base = os.path.normpath(os.path.join(os.path.dirname(importer_abs), spec))
+    cands = [base + e for e in TS_RESOLVE_EXTS]
+    cands += [os.path.join(base, "index" + e) for e in TS_RESOLVE_EXTS]
+    cands.append(base)
+    for c in cands:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return os.path.abspath(base)
+
+
+def resolve_py_module(dots, mod, importer_abs, root):
+    if dots:
+        pkg = os.path.dirname(importer_abs)
+        for _ in range(len(dots) - 1):
+            pkg = os.path.dirname(pkg)
+        base = os.path.join(pkg, *mod.split(".")) if mod else pkg
+    else:
+        base = os.path.join(root, *mod.split("."))
+    for c in (base + ".py", os.path.join(base, "__init__.py"), base + ".pyi"):
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return os.path.abspath(base + ".py")
+
+
+def file_references(text, cand_abs, def_abs, sym_name, lang, root, imports_cache):
+    """True if candidate file actually imports `sym_name` from `def_abs`."""
+    recs = imports_cache.get(cand_abs)
+    if recs is None:
+        recs = parse_imports(text, lang)
+        imports_cache[cand_abs] = recs
+
+    if lang in ("typescript", "tsx", "javascript"):
+        for r in recs:
+            if resolve_ts_module(r["module"], cand_abs) != def_abs:
+                continue
+            if sym_name in r["named"] or r["star"]:
+                return True
+            for ns in r["namespaces"]:
+                if _uses_qualified(text, ns, sym_name):
+                    return True
+        return False
+    if lang == "python":
+        for r in recs:
+            if r["kind"] == "py_from":
+                if resolve_py_module(r["dots"], r["module"], cand_abs, root) != def_abs:
+                    continue
+                if sym_name in r["named"] or r["star"]:
+                    return True
+            else:  # py_import: import mod [as alias]; usage mod.Sym
+                if resolve_py_module("", r["module"], cand_abs, root) != def_abs:
+                    continue
+                if _uses_qualified(text, r["alias"], sym_name):
+                    return True
+        return False
+    if lang == "go":
+        def_dir = os.path.dirname(def_abs)
+        # Same package (same directory): the symbol is used unqualified, no
+        # import. Package-level names are unique within a package, so a bare
+        # occurrence is a real reference.
+        if os.path.dirname(cand_abs) == def_dir:
+            return re.search(r'(?<![\w.])%s\b' % re.escape(sym_name), text) is not None
+        def_pkg = os.path.basename(def_dir)
+        for r in recs:
+            if os.path.basename(r["module"].rstrip("/")) != def_pkg:
+                continue
+            if _uses_qualified(text, r["alias"], sym_name):
+                return True
+        return False
+    return False
 
 
 def integrate_priority(l1, symbols):
@@ -472,11 +669,14 @@ def main():
             continue
         tree = parser.parse(src)
         extractor = LANGS[lang]["extract"]
-        for kind, name, exported in extractor(src, tree.root_node):
-            symbols.append({
+        for kind, name, exported, signature in extractor(src, tree.root_node):
+            sym = {
                 "file": rel, "language": lang, "name": name, "kind": kind,
                 "exported": exported, "referenced_by": [], "blast_radius": 0,
-            })
+            }
+            if signature:
+                sym["signature"] = signature
+            symbols.append(sym)
         analyzed.append(rel)
         used_langs.add(lang)
 
@@ -484,7 +684,9 @@ def main():
         fallback("no analyzable source files found on disk; Layer 1 is sufficient",
                  skipped_languages=skipped)
 
-    # Reference index per ref-family, so blast radius only counts same-language refs.
+    # Read candidate files per ref-family (same-language only). Blast radius is
+    # import-resolved: a candidate counts only if it imports the symbol from the
+    # file that defines it (see file_references), not if it merely mentions it.
     family_exts = {}
     for lang in used_langs:
         fam = REF_FAMILIES[lang]
@@ -493,30 +695,34 @@ def main():
     changed_abs = {os.path.abspath(c if os.path.isabs(c) else os.path.join(root, c))
                    for c in supported}
 
-    family_index = {}
+    family_texts = {}
     for fam, exts in family_exts.items():
-        idx = {}
+        texts = {}
         for fp in iter_source_files(root, exts):
             ap = os.path.abspath(fp)
+            if ap in changed_abs:
+                continue
             try:
                 with open(fp, "r", encoding="utf-8", errors="replace") as fh:
-                    idx[ap] = set(IDENT_RE.findall(fh.read()))
+                    texts[ap] = fh.read()
             except OSError:
                 continue
-        family_index[fam] = idx
+        family_texts[fam] = texts
 
+    imports_cache = {}
     for sym in symbols:
         if not sym["exported"]:
             continue
-        fam = REF_FAMILIES[sym["language"]]
-        idx = family_index.get(fam, {})
+        lang = sym["language"]
+        fam = REF_FAMILIES[lang]
+        def_abs = os.path.abspath(os.path.join(root, sym["file"]))
         search_name = sym["name"].split(".")[-1]
         refs = []
-        for fp, idents in idx.items():
-            if fp in changed_abs:
-                continue
-            if search_name in idents:
-                refs.append(os.path.relpath(fp, root))
+        for ap, text in family_texts.get(fam, {}).items():
+            if search_name not in text:
+                continue  # cheap pre-filter before the import check
+            if file_references(text, ap, def_abs, search_name, lang, root, imports_cache):
+                refs.append(os.path.relpath(ap, root))
         sym["referenced_by"] = sorted(refs)
         sym["blast_radius"] = len(refs)
 

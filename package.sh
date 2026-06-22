@@ -28,11 +28,15 @@ PY
 
 # Stage only the files that belong in the distributed skill.
 DEST="$STAGE/$SKILL_NAME"
-mkdir -p "$DEST/scripts" "$DEST/evals"
+mkdir -p "$DEST/js" "$DEST/scripts" "$DEST/evals"
 cp "$ROOT/SKILL.md" "$DEST/"
 cp "$ROOT/README.md" "$DEST/"
-cp "$ROOT"/scripts/*.py "$DEST/scripts/"
+cp "$ROOT/package.json" "$DEST/"
+cp "$ROOT"/js/*.mjs "$DEST/js/"
+cp "$ROOT"/scripts/*.py "$DEST/scripts/"   # Python reference
 cp "$ROOT"/evals/*.json "$DEST/evals/"
+# Node deps (web-tree-sitter + WASM grammars) are installed on the target with
+# `npm install`; node_modules is intentionally not bundled.
 
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/$SKILL_NAME.skill"

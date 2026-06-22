@@ -1,0 +1,14 @@
+{
+  "name": "code-review-distill-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node port of code-review-distill (zero native build; WASM grammars).",
+  "scripts": {
+    "test": "node --test js/*.test.mjs"
+  },
+  "dependencies": {
+    "web-tree-sitter": "0.24.4",
+    "tree-sitter-wasms": "^0.1.11"
+  }
+}

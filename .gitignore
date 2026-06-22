@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 *.skill
 dist/
+node_modules/
+package-lock.json

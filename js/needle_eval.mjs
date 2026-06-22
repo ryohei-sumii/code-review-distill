@@ -6,9 +6,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
-const JS = path.dirname(new URL(import.meta.url).pathname);
+const JS = path.dirname(fileURLToPath(import.meta.url));
 const POSITIONS = ["start", "middle", "end"];
 const NEEDLE_MARK = "NEEDLE";
 

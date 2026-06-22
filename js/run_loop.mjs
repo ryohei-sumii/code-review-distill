@@ -3,9 +3,9 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
-const HERE = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TOKEN_RE = /[a-z0-9][a-z0-9_+-]*/g;
 
 const STOPWORDS = new Set(("the a an to of in on for and or is are this that these those with your you i it if " +

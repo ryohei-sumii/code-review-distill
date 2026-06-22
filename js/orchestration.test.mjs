@@ -2,12 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, cpSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const JS = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.dirname(JS);
 const git = (repo, ...a) => execFileSync("git", a, { cwd: repo, stdio: "ignore" });
 function initRepo() {
   const repo = mkdtempSync(path.join(tmpdir(), "crd-orch-"));
@@ -68,4 +69,19 @@ test("flow_map builds an internal call graph", () => {
   const g = runJson("flow_map.mjs", "--files", path.join(repo, "app.ts"), "--root", repo, "--json");
   assert.ok(g.nodes.includes("main") && g.nodes.includes("a") && g.nodes.includes("b"));
   assert.ok(g.edges.some((e) => e.from === "a" && e.to === "b"));
+});
+
+test("orchestration works when the install path contains a space", () => {
+  // sibling-script resolution must use fileURLToPath, not URL.pathname (which
+  // percent-encodes spaces and breaks `node js/<sibling>.mjs`).
+  const spaced = mkdtempSync(path.join(tmpdir(), "crd has space-"));
+  cpSync(JS, path.join(spaced, "js"), { recursive: true });
+  symlinkSync(path.join(REPO, "node_modules"), path.join(spaced, "node_modules"));
+  const repo = initRepo();
+  write(repo, "a.ts", "export function f(a){return a;}\n");
+  commit(repo, "init");
+  write(repo, "a.ts", "export function f(a,b){return a+b;}\n");
+  commit(repo, "change");
+  const out = execFileSync("node", [path.join(spaced, "js", "route.mjs"), "--range", "HEAD~1..HEAD", "--cwd", repo, "--json"], { encoding: "utf8" });
+  assert.equal(JSON.parse(out).mode, "brief");
 });

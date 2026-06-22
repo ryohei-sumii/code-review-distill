@@ -7,9 +7,9 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
-const JS = path.dirname(new URL(import.meta.url).pathname);
+const JS = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_MAX_FILES = 3, DEFAULT_MAX_LINES = 60, DEFAULT_MIN_BLAST = 10, DEFAULT_LARGE_FILES = 25;
 const FANOUT_BATCH = 10;
 

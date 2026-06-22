@@ -24,18 +24,18 @@ the middle of a long transcript.
 
 - **Full map** (Layer 1 → Layer 2, below) for multi-file changes, large hunks,
   refactors, or any PR where you don't already hold the whole diff in mind.
-- **Brief** (`scripts/impact_brief.py`, below) for small changes: read the diff
+- **Brief** (`js/impact_brief.mjs`, below) for small changes: read the diff
   yourself, then run the brief for the cross-repo signals you *can't* cheaply
   compute — blast radius, breaking signature changes, test gap. A few hundred
   bytes, net-positive even on a one-file change.
 - **Skip entirely** only when the change is trivial *and* touches no public
   surface (no exported symbol, no callers) — then even the brief adds little.
 
-## Small-change path: `impact_brief.py`
+## Small-change path: `impact_brief.mjs`
 
 ```bash
-python scripts/impact_brief.py --range main..HEAD --cwd <repo>     # text
-python scripts/impact_brief.py --staged --cwd <repo> --json        # no breaking info
+node js/impact_brief.mjs --range main..HEAD --cwd <repo>     # text
+node js/impact_brief.mjs --staged --cwd <repo> --json        # no breaking info
 ```
 Orchestrates the three tools and returns only: file/line totals, `flags`
 (`code_changed_without_tests`, …), `breaking_changes` (kept public symbols whose
@@ -48,7 +48,7 @@ the diff directly and let the brief supply the impact.
 0. **Just route it (recommended default).** One call measures the diff *and its
    blast radius* (a cheap Layer 2 pass), then picks the path:
    ```bash
-   python scripts/route.py --range main..HEAD --cwd <repo>
+   node js/route.mjs --range main..HEAD --cwd <repo>
    ```
    - small diff → **brief**;
    - high blast radius (`>= --min-blast`) or many files (`>= --large-files`) →
@@ -82,7 +82,7 @@ the diff directly and let the brief supply the impact.
 
 2. **Run Layer 1 (language-agnostic).** Always start here.
    ```bash
-   python scripts/diff_summary.py --range main..HEAD --cwd <repo> > /tmp/l1.json
+   node js/diff_summary.mjs --range main..HEAD --cwd <repo> > /tmp/l1.json
    ```
    Read the JSON. Note `risk_flags`, `totals`, and `review_order`. Key signals:
    `code_changed_without_tests`, `file_deleted`, `large_hunk`,
@@ -96,7 +96,7 @@ the diff directly and let the brief supply the impact.
    supported source file (`.ts/.tsx/.js/.jsx`, `.py`, `.go`), get the blast
    radius:
    ```bash
-   python scripts/symbol_impact.py --root <repo> --diff-json /tmp/l1.json > /tmp/l2.json
+   node js/symbol_impact.mjs --root <repo> --diff-json /tmp/l1.json > /tmp/l2.json
    ```
    - Exit `0`: read `public_api_changes`, `impact_flags`, and per-symbol
      `blast_radius` / `referenced_by`. A changed public symbol with a wide
@@ -109,7 +109,7 @@ the diff directly and let the brief supply the impact.
      widely-used public-API changes that mechanical risk flags miss.
    - Exit `3`: expected fallback (no supported files, or grammar not installed).
      Continue with Layer 1 only — do **not** treat this as an error. To enable:
-     `pip install tree-sitter tree-sitter-typescript tree-sitter-python tree-sitter-go --break-system-packages`.
+     run `npm install` once in the skill directory (web-tree-sitter + WASM grammars, no native build).
 
 4. **Prioritise.** Walk `review_order` (highest risk first) — use Layer 2's
    impact-aware order when it ran, else Layer 1's. Spend attention on high-risk
@@ -138,21 +138,21 @@ the diff directly and let the brief supply the impact.
 
 Reach for these when the task is adjacent to a plain review:
 
-- **Refactor verification** — `scripts/refactor_check.py --range base..head
+- **Refactor verification** — `js/refactor_check.mjs --range base..head
   --cwd <repo>`. Compares symbols at both revisions and flags when a "pure
   refactor" silently changed the public API
   (`public_api_changed_during_refactor`) or changed a kept symbol's **signature**
   (`public_signature_changed` — param reorder / type / return change, which
   breaks callers while keeping the name). Use when the user calls something a
   refactor and you need to confirm behaviour/API was preserved.
-- **Process flow** — `scripts/flow_map.py --dir <src>` emits a Mermaid
+- **Process flow** — `js/flow_map.mjs --dir <src>` emits a Mermaid
   `flowchart` of the internal call graph; `--sequence ENTRY` traces a
   `sequenceDiagram` from one function; `--json` gives the raw graph. Use when
   asked "how does this flow" / "what calls what".
-- **Trigger tuning** — `scripts/run_loop.py` scores this `description` against
+- **Trigger tuning** — `js/run_loop.mjs` scores this `description` against
   `evals/trigger_evalset.json` (precision/recall/trigger-rate, plus words to
   add or reconsider). Use when iterating the skill's own activation accuracy.
-- **Lost-in-the-middle eval** — `scripts/needle_eval.py` plants one defect in a
+- **Lost-in-the-middle eval** — `js/needle_eval.mjs` plants one defect in a
   changeset and measures the context geometry (total tokens, needle distance
   from the context end) for raw-diff vs distilled review. `--emit-cases` /
   `--predictions` add a real model-judge detection-rate path. Use to justify or
@@ -160,16 +160,16 @@ Reach for these when the task is adjacent to a plain review:
 
 ## Output reference
 
-- `diff_summary.py` → `{ source, totals, files[], risk_flags[], review_order[] }`.
+- `diff_summary.mjs` → `{ source, totals, files[], risk_flags[], review_order[] }`.
   Each file: `path, old_path?, status, language, additions, deletions, is_test,
   is_generated, is_binary, hunks[], risk_flags[]`.
-- `symbol_impact.py` → `{ ok, languages[], analyzed_files[], symbols[],
+- `symbol_impact.mjs` → `{ ok, languages[], analyzed_files[], symbols[],
   public_api_changes[], impact_flags[] }`, or `{ ok:false, note }` with exit 3
   on graceful fallback. Supports typescript / javascript / python / go.
 
 ## Extending
 
 Layer 1 is already language-agnostic. To add a language to Layer 2, add a
-registry entry in `symbol_impact.py` (`LANGS`: extensions + tree-sitter loader)
-and a per-language `extract_*` walk; Layer 1 needs no changes. `flow_map.py`
+registry entry in `symbol_impact.mjs` (`LANGS`: extensions + tree-sitter loader)
+and a per-language `extract_*` walk; Layer 1 needs no changes. `flow_map.mjs`
 takes a parallel `FLOW` entry (function/call node types).

@@ -7,9 +7,10 @@ import Parser from "web-tree-sitter";
 import { createRequire } from "node:module";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const WASM_DIR = path.join(path.dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
+export const WASM_DIR = path.join(path.dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
 
 const WIDE_USE_THRESHOLD = 3;
 const MAX_REFS_COMPACT = 5;
@@ -171,18 +172,31 @@ function extractGo(root) {
   return symbols;
 }
 
-const LANGS = {
+export const LANGS = {
   typescript: { exts: [".ts", ".mts", ".cts"], wasm: "tree-sitter-typescript.wasm", extract: extractTs },
   tsx: { exts: [".tsx"], wasm: "tree-sitter-tsx.wasm", extract: extractTs },
   javascript: { exts: [".js", ".jsx", ".mjs", ".cjs"], wasm: "tree-sitter-tsx.wasm", extract: extractTs },
   python: { exts: [".py", ".pyi"], wasm: "tree-sitter-python.wasm", extract: extractPython },
   go: { exts: [".go"], wasm: "tree-sitter-go.wasm", extract: extractGo },
 };
-const REF_FAMILIES = { typescript: "tsjs", tsx: "tsjs", javascript: "tsjs", python: "python", go: "go" };
+export const REF_FAMILIES = { typescript: "tsjs", tsx: "tsjs", javascript: "tsjs", python: "python", go: "go" };
 const EXT_TO_LANG = {};
 for (const [lang, cfg] of Object.entries(LANGS)) for (const e of cfg.exts) EXT_TO_LANG[e] = lang;
-const extOf = (p) => path.extname(p).toLowerCase();
-const langOf = (p) => EXT_TO_LANG[extOf(p)] || null;
+export const extOf = (p) => path.extname(p).toLowerCase();
+export const langOf = (p) => EXT_TO_LANG[extOf(p)] || null;
+
+// Load a tree-sitter parser per language; returns [{lang: Parser}, {lang: err}].
+export async function loadParsers(langs) {
+  await Parser.init();
+  const parsers = {}, skipped = {};
+  for (const lang of langs) {
+    try {
+      const L = await Parser.Language.load(path.join(WASM_DIR, LANGS[lang].wasm));
+      const p = new Parser(); p.setLanguage(L); parsers[lang] = p;
+    } catch (e) { skipped[lang] = String(e.message || e); }
+  }
+  return [parsers, skipped];
+}
 
 // --- import-aware reference resolution ---
 
@@ -415,15 +429,7 @@ async function main() {
   if (!supported.length) fallback("no supported source files in change set; Layer 1 is sufficient");
 
   const langsPresent = [...new Set(supported.map(langOf))].sort();
-  await Parser.init();
-  const parsers = {};
-  const skipped = {};
-  for (const lang of langsPresent) {
-    try {
-      const L = await Parser.Language.load(path.join(WASM_DIR, LANGS[lang].wasm));
-      const p = new Parser(); p.setLanguage(L); parsers[lang] = p;
-    } catch (e) { skipped[lang] = String(e.message || e); }
-  }
+  const [parsers, skipped] = await loadParsers(langsPresent);
   if (!Object.keys(parsers).length) fallback("no grammars loadable", { skipped_languages: skipped });
 
   const symbols = [];
@@ -515,4 +521,4 @@ async function main() {
   emit(result, a.compact);
 }
 
-main();
+if (import.meta.url === pathToFileURL(process.argv[1]).href) main();
